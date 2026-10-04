@@ -53,6 +53,7 @@ export function ReportPanel() {
       memoryDiff,
       network,
       scenarioResult,
+      leaks,
       baselines,
     });
     downloadText(
@@ -72,6 +73,7 @@ export function ReportPanel() {
       memoryDiff,
       network,
       scenarioResult,
+      leaks,
       baselines,
     });
     downloadText(`pulseflow-report-${Date.now()}.md`, md, "text/markdown");

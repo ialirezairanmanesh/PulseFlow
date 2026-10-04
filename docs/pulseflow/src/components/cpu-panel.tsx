@@ -17,6 +17,7 @@ export function CpuPanel() {
     cpuMessage,
     startCpuRecord,
     stopCpuRecord,
+    exportCpu,
   } = usePulse();
   const [durationMs, setDurationMs] = useState<number>(5000);
 
@@ -70,6 +71,14 @@ export function CpuPanel() {
             onClick={() => stopCpuRecord()}
           >
             Stop
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!connected || !cpuProfile}
+            onClick={() => exportCpu(cpuProfile?.durationMs)}
+          >
+            Export speedscope
           </Button>
         </div>
         {cpuMessage && (

@@ -16,7 +16,7 @@ import { normalizePoint, tooltipStyle } from "@/lib/chart-utils";
 import { usePulse } from "@/lib/pulse-store";
 import { formatBytes } from "@/lib/utils";
 
-type Tab = "live" | "snapshots" | "diff";
+type Tab = "live" | "snapshots" | "diff" | "leaks";
 
 export function MemoryPanel() {
   const {
@@ -28,9 +28,11 @@ export function MemoryPanel() {
     retainingPath,
     memoryMessage,
     capabilities,
+    leaks,
     captureMemorySnapshot,
     diffMemorySnapshots,
     requestRetainingPath,
+    leakControl,
   } = usePulse();
   const [tab, setTab] = useState<Tab>("live");
   const normalized = points.map(normalizePoint);
@@ -61,6 +63,7 @@ export function MemoryPanel() {
               ["live", "Live"],
               ["snapshots", "Snapshots"],
               ["diff", "Diff"],
+              ["leaks", "Leaks"],
             ] as const
           ).map(([id, label]) => (
             <Button
@@ -231,6 +234,46 @@ export function MemoryPanel() {
                 >
                   <span className="text-[var(--ink)]">{g.className}</span>
                   {" · "}+{formatBytes(g.bytesDelta)} · +{g.instancesDelta} instances
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+
+      {tab === "leaks" && (
+        <section className="rounded-xl border border-white/10 bg-black/20 px-4 py-4 backdrop-blur-sm">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              disabled={!connected}
+              onClick={() => leakControl("report")}
+            >
+              Report leaks
+            </Button>
+            <span className="text-xs text-[var(--ink-faint)]">
+              Outstanding objects (created but not disposed) — debug/profile only
+            </span>
+          </div>
+          {memoryMessage && (
+            <p className="mb-3 text-sm text-[var(--ink-muted)]">{memoryMessage}</p>
+          )}
+          {leaks.length === 0 ? (
+            <p className="text-sm text-[var(--ink-muted)]">
+              {connected
+                ? "No leak report yet — click Report leaks (requires a debug/profile build)."
+                : "Connect to inspect leaks"}
+            </p>
+          ) : (
+            <ul className="space-y-2 text-sm">
+              {leaks.map((l) => (
+                <li
+                  key={l.className}
+                  className="rounded-md border border-white/8 bg-white/5 px-3 py-2 text-[var(--ink-muted)]"
+                >
+                  <span className="text-[var(--ink)]">{l.className}</span>
+                  {" · "}
+                  {l.count} outstanding
                 </li>
               ))}
             </ul>

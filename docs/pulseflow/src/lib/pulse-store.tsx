@@ -117,6 +117,7 @@ type PulseContextValue = {
   hotWidgetsControl: (action: "freeze" | "unfreeze" | "reset") => void;
   startCpuRecord: (durationMs?: number) => void;
   stopCpuRecord: () => void;
+  exportCpu: (durationMs?: number) => void;
   listScenarios: () => void;
   runScenario: (id: string, params?: Record<string, unknown>) => void;
   stopScenario: () => void;
@@ -125,6 +126,10 @@ type PulseContextValue = {
   requestRetainingPath: (classId?: string, objectId?: string) => void;
   exportTimeline: (durationMs?: number) => void;
   networkControl: (action: "refresh" | "clear" | "enable") => void;
+  leakControl: (
+    action: "report" | "start" | "stop" | "reset",
+    opts?: { threshold?: number; limit?: number },
+  ) => void;
   captureBaseline: (label: string) => void;
   clearBaselines: () => void;
 };
@@ -400,6 +405,12 @@ export function PulseProvider({ children }: { children: ReactNode }) {
           case "leaks":
             setLeaks(msg.available ? msg.leaked ?? [] : []);
             break;
+          case "cpuExport":
+            if (msg.message) setCpuMessage(msg.message);
+            if (msg.available && msg.base64 && msg.fileName) {
+              downloadBase64(msg.fileName, msg.base64, "application/json");
+            }
+            break;
         }
       },
     });
@@ -538,6 +549,12 @@ export function PulseProvider({ children }: { children: ReactNode }) {
     [send],
   );
 
+  const exportCpu = useCallback(
+    (durationMs?: number) =>
+      send(() => clientRef.current?.send({ type: "cpuExport", durationMs })),
+    [send],
+  );
+
   const listScenarios = useCallback(
     () => send(() => clientRef.current?.send({ type: "scenario", action: "list" })),
     [send],
@@ -598,6 +615,22 @@ export function PulseProvider({ children }: { children: ReactNode }) {
   const networkControl = useCallback(
     (action: "refresh" | "clear" | "enable") =>
       send(() => clientRef.current?.send({ type: "networkControl", action })),
+    [send],
+  );
+
+  const leakControl = useCallback(
+    (
+      action: "report" | "start" | "stop" | "reset",
+      opts?: { threshold?: number; limit?: number },
+    ) =>
+      send(() =>
+        clientRef.current?.send({
+          type: "leakControl",
+          action,
+          threshold: opts?.threshold,
+          limit: opts?.limit,
+        }),
+      ),
     [send],
   );
 
@@ -680,6 +713,7 @@ export function PulseProvider({ children }: { children: ReactNode }) {
       hotWidgetsControl,
       startCpuRecord,
       stopCpuRecord,
+      exportCpu,
       listScenarios,
       runScenario,
       stopScenario,
@@ -688,6 +722,7 @@ export function PulseProvider({ children }: { children: ReactNode }) {
       requestRetainingPath,
       exportTimeline,
       networkControl,
+      leakControl,
       captureBaseline,
       clearBaselines,
     }),
@@ -741,6 +776,7 @@ export function PulseProvider({ children }: { children: ReactNode }) {
       hotWidgetsControl,
       startCpuRecord,
       stopCpuRecord,
+      exportCpu,
       listScenarios,
       runScenario,
       stopScenario,
@@ -749,6 +785,7 @@ export function PulseProvider({ children }: { children: ReactNode }) {
       requestRetainingPath,
       exportTimeline,
       networkControl,
+      leakControl,
       captureBaseline,
       clearBaselines,
     ],

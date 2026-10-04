@@ -1,5 +1,6 @@
 import type {
   CpuProfileSummary,
+  LeakEntry,
   MemoryDiff,
   NetworkRequest,
   PerformanceProblem,
@@ -16,6 +17,7 @@ export interface SessionReportInput {
   memoryDiff?: MemoryDiff | null;
   network: NetworkRequest[];
   scenarioResult?: ScenarioResult | null;
+  leaks?: LeakEntry[];
   baselines: SessionBaseline[];
 }
 
@@ -32,6 +34,7 @@ export function buildSessionReportJson(input: SessionReportInput) {
     problems: input.problems,
     cpuHotspots: input.cpuProfile?.topFunctions?.slice(0, 10) ?? [],
     memoryDiff: input.memoryDiff ?? null,
+    leaks: input.leaks ?? [],
     slowHttp,
     scenarioResult: input.scenarioResult ?? null,
     baselines: input.baselines,
@@ -81,6 +84,16 @@ export function buildSessionReportMarkdown(input: SessionReportInput): string {
       lines.push(
         `- **${g.className}** — +${(g.bytesDelta / (1024 * 1024)).toFixed(2)} MB, +${g.instancesDelta} instances`,
       );
+    }
+    lines.push("");
+  }
+
+  lines.push("## Leaks", "");
+  if (!data.leaks?.length) {
+    lines.push("_No leak report captured._", "");
+  } else {
+    for (const l of data.leaks) {
+      lines.push(`- **${l.className}** — ${l.count} outstanding`);
     }
     lines.push("");
   }

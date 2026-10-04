@@ -359,6 +359,15 @@ export interface BridgeLeaksMessage {
   message?: string;
 }
 
+export interface BridgeCpuExportMessage {
+  type: "cpuExport";
+  available: boolean;
+  format: "speedscope";
+  base64?: string;
+  fileName?: string;
+  message?: string;
+}
+
 export type BridgeServerMessage =
   | BridgeStatusMessage
   | BridgeMetricsMessage
@@ -373,7 +382,8 @@ export type BridgeServerMessage =
   | BridgeScenarioStatusMessage
   | BridgeMemoryProfileMessage
   | BridgeTimelineExportMessage
-  | BridgeLeaksMessage;
+  | BridgeLeaksMessage
+  | BridgeCpuExportMessage;
 
 export type BridgeClientMessage =
   | { type: "connect"; url: string }
@@ -384,6 +394,7 @@ export type BridgeClientMessage =
   | { type: "stress"; action: string; params?: Record<string, unknown> }
   | { type: "hotWidgetsControl"; action: "freeze" | "unfreeze" | "reset" }
   | { type: "cpuRecord"; action: "start" | "stop"; durationMs?: number }
+  | { type: "cpuExport"; durationMs?: number }
   | {
       type: "scenario";
       action: "list" | "run" | "stop";
@@ -398,4 +409,10 @@ export type BridgeClientMessage =
       objectId?: string;
     }
   | { type: "timelineExport"; action: "perfetto"; durationMs?: number }
-  | { type: "networkControl"; action: "refresh" | "clear" | "enable" };
+  | { type: "networkControl"; action: "refresh" | "clear" | "enable" }
+  | {
+      type: "leakControl";
+      action: "report" | "start" | "stop" | "reset";
+      threshold?: number;
+      limit?: number;
+    };

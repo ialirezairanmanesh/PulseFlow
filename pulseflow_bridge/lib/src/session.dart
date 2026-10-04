@@ -7,6 +7,7 @@ import 'package:vm_service/vm_service_io.dart';
 
 import 'cpu_profile.dart';
 import 'discover.dart';
+import 'speedscope.dart';
 import 'wire.dart';
 
 Map<String, bool> defaultCaps() => <String, bool>{
@@ -98,6 +99,7 @@ class BridgeSession {
   int? _cpuRecordStartedAt;
   int? _cpuRecordOriginMicros;
   CpuProfileSummary? _cpuProfileCache;
+  Map<String, dynamic>? _lastCpuRaw;
   final List<Map<String, Object?>> _memorySnapshots = <Map<String, Object?>>[];
   final Set<String> _seenHttpIds = <String>{};
   String? _scenarioRunning;
@@ -144,6 +146,9 @@ class BridgeSession {
         case 'cpuRecord':
           await _handleCpuRecord('${msg['action']}', (msg['durationMs'] as num?)?.toInt() ?? 5000);
           break;
+        case 'cpuExport':
+          await _handleCpuExport((msg['durationMs'] as num?)?.toInt() ?? 0);
+          break;
         case 'scenario':
           await _handleScenario('${msg['action']}', msg['id'] as String?, _asMap(msg['params']));
           break;
@@ -160,6 +165,13 @@ class BridgeSession {
           break;
         case 'networkControl':
           await _handleNetworkControl('${msg['action']}');
+          break;
+        case 'leakControl':
+          await _handleLeakControl(
+            '${msg['action']}',
+            (msg['threshold'] as num?)?.toInt(),
+            (msg['limit'] as num?)?.toInt(),
+          );
           break;
         default:
           _send(<String, Object?>{'type': 'error', 'message': 'Unknown bridge command'});
@@ -264,6 +276,7 @@ class BridgeSession {
     _recordQuietUntil = 0;
     _caps = defaultCaps();
     _cpuProfileCache = null;
+    _lastCpuRaw = null;
     _cpuRecordOriginMicros = null;
     _cpuRecordStartedAt = null;
     _cpuRecording = false;
@@ -1014,6 +1027,7 @@ class BridgeSession {
     if (_mode == 'mock') {
       final CpuProfileSummary profile = mockCpuProfile(durationMs);
       _cpuProfileCache = profile;
+      _lastCpuRaw ??= _mockCpuRawSamples();
       _send(<String, Object?>{
         'type': 'cpuProfile',
         'available': true,
@@ -1048,6 +1062,7 @@ class BridgeSession {
       }, isolateId: _isolateId);
       final CpuProfileSummary profile = transformCpuSamples(result ?? <String, dynamic>{}, durationMs);
       _cpuProfileCache = profile;
+      if (result != null) _lastCpuRaw = result;
       _send(<String, Object?>{
         'type': 'cpuProfile',
         'available': true,
@@ -1068,6 +1083,52 @@ class BridgeSession {
   // ---------------------------------------------------------------------------
   // Scenarios
   // ---------------------------------------------------------------------------
+
+  Map<String, dynamic> _mockCpuRawSamples() => <String, dynamic>{
+        'samplePeriod': 1000,
+        'functions': <Map<String, Object?>>[
+          {'name': 'build', 'owner': {'name': 'InvoiceListState'}},
+          {'name': 'setState', 'owner': {'name': 'State'}},
+          {'name': 'performLayout', 'owner': {'name': 'RenderFlex'}},
+          {'name': 'jsonDecode', 'owner': {'name': 'dart:convert'}},
+        ],
+        'samples': <Map<String, Object?>>[
+          {'stack': <int>[0, 1]},
+          {'stack': <int>[0, 1]},
+          {'stack': <int>[0, 2, 3]},
+          {'stack': <int>[0]},
+        ],
+      };
+
+  Future<void> _handleCpuExport(int durationMs) async {
+    final Map<String, dynamic>? raw = _lastCpuRaw;
+    if (raw == null) {
+      _send(<String, Object?>{
+        'type': 'cpuExport',
+        'available': false,
+        'format': 'speedscope',
+        'message': 'Record a CPU profile first',
+      });
+      return;
+    }
+    final int effectiveDuration =
+        durationMs > 0 ? durationMs : (_cpuProfileCache?.durationMs ?? 5000);
+    final Map<String, Object?> payload = buildSpeedscope(
+      raw,
+      name: 'PulseFlow CPU ${DateTime.now().toIso8601String()}',
+      durationMs: effectiveDuration,
+    );
+    final String encoded =
+        base64Encode(utf8.encode(jsonEncode(payload)));
+    _send(<String, Object?>{
+      'type': 'cpuExport',
+      'available': true,
+      'format': 'speedscope',
+      'base64': encoded,
+      'fileName': 'pulseflow-${DateTime.now().millisecondsSinceEpoch}.speedscope.json',
+      'message': 'Speedscope profile ready',
+    });
+  }
 
   Future<void> _handleScenario(String action, String? id, Map<String, dynamic>? params) async {
     if (_mode == 'mock') {
@@ -1430,6 +1491,78 @@ class BridgeSession {
       } catch (_) {}
     }
     await _pollHttpProfile();
+  }
+
+  Future<void> _handleLeakControl(String action, int? threshold, int? limit) async {
+    if (action != 'report') {
+      // start/stop/reset are accepted for forward compatibility; the app-side
+      // leak probe is always active in debug/profile builds.
+      _send(<String, Object?>{
+        'type': 'leaks',
+        'available': true,
+        'leaked': <Object?>[],
+        'message': 'Leak probe $action acknowledged',
+      });
+      return;
+    }
+    if (_mode == 'mock') {
+      _send(<String, Object?>{
+        'type': 'leaks',
+        'available': true,
+        'leaked': <Map<String, Object?>>[
+          {'className': 'Image', 'count': 3},
+          {'className': 'AnimationController', 'count': 2},
+          {'className': '_Uint8ArrayView', 'count': 1},
+        ],
+        'message': 'Demo leak report',
+      });
+      return;
+    }
+    if (_mode != 'live' || _isolateId == null) {
+      _send(<String, Object?>{
+        'type': 'leaks',
+        'available': false,
+        'leaked': <Object?>[],
+        'message': 'Connect before requesting a leak report',
+      });
+      return;
+    }
+    if (!_extensionMethods.contains('ext.pulseflow.getLeakReport')) {
+      _send(<String, Object?>{
+        'type': 'leaks',
+        'available': false,
+        'leaked': <Object?>[],
+        'message': 'Leak probe unavailable — use the pulseflow_flutter package (debug/profile)',
+      });
+      return;
+    }
+    try {
+      final Map<String, dynamic>? data = await _callExtension(
+        'ext.pulseflow.getLeakReport',
+        args: <String, dynamic>{
+          if (threshold != null) 'threshold': '$threshold',
+          if (limit != null) 'limit': '$limit',
+        },
+      );
+      final bool available = data?['available'] != false;
+      final List<dynamic> leaked = (data?['leaked'] as List<dynamic>?) ?? <dynamic>[];
+      _send(<String, Object?>{
+        'type': 'leaks',
+        'available': available,
+        'leaked': leaked
+            .whereType<Map>()
+            .map((Map m) => m.cast<String, Object?>())
+            .toList(),
+        if (data?['message'] != null) 'message': data!['message'],
+      });
+    } catch (error) {
+      _send(<String, Object?>{
+        'type': 'leaks',
+        'available': false,
+        'leaked': <Object?>[],
+        'message': '$error',
+      });
+    }
   }
 
   Future<void> _runStress(String action, Map<String, dynamic>? params) async {
