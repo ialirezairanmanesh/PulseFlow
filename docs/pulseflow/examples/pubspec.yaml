@@ -1,0 +1,10 @@
+name: pulseflow_extension_example
+description: Standalone Flutter package so the PulseFlow extension stub can resolve package:flutter while living next to the dashboard.
+publish_to: none
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter

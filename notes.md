@@ -1,0 +1,2 @@
+- [ ] PulseFlow dashboard: grab [pulseflow.zip](/cursor/stores/self/docs/pulseflow.zip) from Context (also [folder](/cursor/stores/self/docs/pulseflow), [readme](/cursor/stores/self/docs/pulseflow-readme.md)); user still stuck getting it locally
+- [x] [Dashboard build](https://cursor.com/agents/bc-547670fa-1932-5030-a802-f43af24578ea): Next.js slice in Context; guiding download on that thread

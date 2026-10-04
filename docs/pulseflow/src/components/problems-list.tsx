@@ -1,0 +1,221 @@
+"use client";
+
+import Link from "next/link";
+import { Snowflake, CircleDot, FileDown } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { buildProblems } from "@/lib/problems";
+import { usePulse } from "@/lib/pulse-store";
+import type { PerformanceProblem } from "@/lib/types";
+
+function severityClass(severity: PerformanceProblem["severity"]) {
+  if (severity === "high") return "border-rose-400/30 bg-rose-500/10 text-rose-100";
+  if (severity === "medium") return "border-amber-400/30 bg-amber-500/10 text-amber-100";
+  return "border-white/10 bg-white/5 text-[var(--ink-muted)]";
+}
+
+export function ProblemsList() {
+  const {
+    hot,
+    hotAvailable,
+    hotMessage,
+    points,
+    gcEvents,
+    connected,
+    error,
+    probeFrozen,
+    isRecording,
+    problemsSnapshot,
+    controlMessage,
+    hotWidgetsControl,
+    cpuProfile,
+    memoryDiff,
+    network,
+    scenarioResult,
+    scenarioRunning,
+  } = usePulse();
+
+  const input = probeFrozen && problemsSnapshot
+    ? problemsSnapshot
+    : {
+        hot,
+        hotAvailable,
+        latest: points.at(-1),
+        gcEvents,
+        cpuProfile,
+        memoryDiff,
+        network,
+        scenarioResult,
+        scenarioRunning,
+      };
+
+  // During Record quiet window, force an empty problem list so the reset is visible
+  const problems = isRecording
+    ? []
+    : buildProblems({
+        hot: input.hot,
+        hotAvailable: input.hotAvailable,
+        latest: input.latest,
+        gcEvents: input.gcEvents,
+        cpuProfile: input.cpuProfile,
+        memoryDiff: input.memoryDiff,
+        network: input.network ?? network,
+        points,
+        scenarioResult: input.scenarioResult,
+        scenarioRunning: input.scenarioRunning,
+      });
+
+  return (
+    <div className="space-y-4">
+      <section className="flex flex-col gap-3 rounded-xl border border-white/10 bg-black/20 px-4 py-4 backdrop-blur-sm sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h2 className="font-[family-name:var(--font-display)] text-2xl tracking-tight text-[var(--ink)]">
+            Problems
+          </h2>
+          <p className="mt-1 text-sm text-[var(--ink-muted)]">
+            Ranked issues to fix first — screen, widget, rate, and a concrete tip
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant={isRecording ? "default" : "secondary"}
+            disabled={!connected || isRecording}
+            title="Clear session counters and start a clean measurement"
+            onClick={() => hotWidgetsControl("reset")}
+          >
+            <CircleDot className="h-3.5 w-3.5" />
+            {isRecording ? "Recording…" : "Record"}
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={probeFrozen ? "default" : "outline"}
+            disabled={!connected}
+            title={
+              probeFrozen
+                ? "Resume live rebuild sampling"
+                : "Hold rankings still while you inspect"
+            }
+            onClick={() => hotWidgetsControl(probeFrozen ? "unfreeze" : "freeze")}
+          >
+            <Snowflake className="h-3.5 w-3.5" />
+            {probeFrozen ? "Unfreeze" : "Freeze"}
+          </Button>
+          <Button type="button" size="sm" variant="ghost" asChild>
+            <Link href="/report">
+              <FileDown className="h-3.5 w-3.5" />
+              Report
+            </Link>
+          </Button>
+        </div>
+      </section>
+
+      {(controlMessage || error) && (
+        <p
+          className={
+            error
+              ? "rounded-md border border-rose-400/25 bg-rose-500/10 px-3 py-2 text-sm text-rose-200"
+              : "rounded-md border border-teal-400/20 bg-teal-500/10 px-3 py-2 text-sm text-teal-100"
+          }
+        >
+          {error ?? controlMessage}
+        </p>
+      )}
+
+      {hotAvailable === false && (
+        <p className="rounded-md border border-amber-400/20 bg-amber-400/10 px-3 py-3 text-sm text-amber-100">
+          {hotMessage ??
+            "Widget probe extension not active — add examples/pulseflow_extension.dart to the app"}
+        </p>
+      )}
+
+      {probeFrozen && (
+        <p className="text-sm text-[var(--ink-faint)]">
+          Frozen — problem ranks and widget samples are held. Click Unfreeze to resume.
+        </p>
+      )}
+
+      {problems.length === 0 ? (
+        <div className="rounded-xl border border-teal-400/20 bg-teal-500/10 px-4 py-6 text-sm text-teal-100">
+          {isRecording
+            ? "Recording — session cleared. Interact with the app; new problems will appear here."
+            : hotMessage ??
+              "Looking good — scroll or navigate the app to surface hidden rebuild pressure."}
+        </div>
+      ) : (
+        <ul className="space-y-3">
+          {problems.map((p) => (
+            <li
+              key={p.id}
+              className={`rounded-xl border px-4 py-3 ${severityClass(p.severity)}`}
+            >
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge
+                      variant={p.severity === "high" ? "error" : "idle"}
+                    >
+                      {p.severity}
+                    </Badge>
+                    <span className="text-[10px] uppercase tracking-[0.14em] opacity-70">
+                      {p.kind.replace(/_/g, " ")}
+                    </span>
+                  </div>
+                  <h3 className="mt-1 font-[family-name:var(--font-display)] text-lg tracking-tight">
+                    {p.title}
+                  </h3>
+                </div>
+                {(p.ratePerSec != null || p.share != null) && (
+                  <div className="text-right text-sm opacity-90">
+                    {p.ratePerSec != null && <div>{p.ratePerSec.toFixed(1)}/s</div>}
+                    {p.share != null && <div>{p.share.toFixed(1)}% share</div>}
+                  </div>
+                )}
+              </div>
+              <p className="mt-1 text-sm opacity-90">{p.detail}</p>
+              <p className="mt-2 text-sm opacity-80">
+                <span className="text-[var(--accent)]">Fix: </span>
+                {p.action}
+              </p>
+              {(p.route || p.widget) && (
+                <p className="mt-2 font-mono text-[12px] opacity-70">
+                  {p.route ? `${p.route}` : ""}
+                  {p.route && p.widget ? " · " : ""}
+                  {p.widget ?? ""}
+                </p>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {!isRecording && input.hot?.screens && input.hot.screens.length > 0 && (
+        <section className="rounded-xl border border-white/10 bg-black/20 px-4 py-4 backdrop-blur-sm">
+          <h3 className="font-[family-name:var(--font-display)] text-lg tracking-tight text-[var(--ink)]">
+            Screens (window)
+          </h3>
+          <p className="mb-3 text-sm text-[var(--ink-muted)]">
+            Rebuild pressure by route in the last{" "}
+            {((input.hot.windowMs || 10000) / 1000).toFixed(0)}s
+          </p>
+          <div className="space-y-2">
+            {input.hot.screens.slice(0, 6).map((s) => (
+              <div
+                key={s.route}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-white/8 bg-white/4 px-3 py-2 text-sm"
+              >
+                <span className="font-mono text-[var(--ink)]">{s.route}</span>
+                <span className="text-[var(--ink-muted)]">
+                  {s.ratePerSec.toFixed(1)}/s · {s.share.toFixed(1)}% ·{" "}
+                  {s.rebuildsWindow} rebuilds
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+    </div>
+  );
+}
