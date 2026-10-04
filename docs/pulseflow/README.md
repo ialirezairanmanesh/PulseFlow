@@ -58,39 +58,51 @@ Use **Try demo mode** to explore every lab surface without a Flutter app.
 
 The bridge WebSocket is shared across pages (React context) — route changes do not reconnect.
 
-## Widget probe + scenarios (Flutter stub)
+## Widget probe + scenarios (Flutter package)
 
-Copy [`examples/pulseflow_extension.dart`](examples/pulseflow_extension.dart) into your Flutter project (e.g. `lib/pulseflow_extension.dart`) and register it:
+Add the `pulseflow_flutter` package (sibling folder `pulseflow_flutter/`) to your app and register
+it from `main()`:
 
 ```dart
+import 'package:pulseflow_flutter/pulseflow_flutter.dart';
+
 void main() {
-  registerPulseFlowExtensions();
+  registerPulseFlow(appPackage: 'my_app');
   runApp(const MyApp());
 }
 ```
 
+The older single-file stub (`examples/pulseflow_extension.dart`) still works, but the package adds
+accurate frame timing (`addTimingsCallback`), refresh-rate-aware budgets, widget source locations
+(`file:line` via the widget inspector), HTTP capture (`HttpOverrides`), and leak signals
+(`FlutterMemoryAllocations`).
+
 Hot-restart, reconnect PulseFlow. The bridge will:
 
 1. Start `ext.pulseflow.startWidgetProbe`
-2. Poll `ext.pulseflow.getHotWidgets` about every second
-3. Rank rebuilds by stable id (`route|widget|key`) over a **10s rolling window**
-4. Detect scenario RPCs when present
+2. Poll `ext.pulseflow.getFrameStats` (accurate build/raster/vsync + refresh rate)
+3. Poll `ext.pulseflow.getHotWidgets` about every second — ranked by stable id (`route|widget|key`) over a **10s rolling window**, with source locations when available
+4. Poll `ext.pulseflow.getNetworkLog` and merge app-captured requests into the network panel
+5. Detect scenario RPCs when present
 
 ### Extension RPCs
 
 | RPC | Purpose |
 | --- | --- |
+| `ext.pulseflow.getFrameStats` | Accurate engine frame timings + refresh rate/budget |
+| `ext.pulseflow.getNetworkLog` | Drain `HttpOverrides`-captured requests |
+| `ext.pulseflow.getLeakReport` | Outstanding (created-not-disposed) objects |
 | `ext.pulseflow.injectInvoices` | Stress: append invoices (`count`) |
 | `ext.pulseflow.spikeCpu` | Stress: busy-loop (`millis`) |
 | `ext.pulseflow.allocateMemory` | Stress: retain buffers (`megabytes`) |
-| `ext.pulseflow.startWidgetProbe` / `stopWidgetProbe` / `resetWidgetProbe` / `setWidgetProbeFrozen` / `getHotWidgets` | Rebuild probe |
+| `ext.pulseflow.startWidgetProbe` / `stopWidgetProbe` / `resetWidgetProbe` / `setWidgetProbeFrozen` / `getHotWidgets` | Rebuild probe (with `sourceUri`/`sourceLine`) |
 | `ext.pulseflow.listScenarios` | List built-in scenarios |
 | `ext.pulseflow.runScenario` | Run scenario by `id` (+ params) |
 | `ext.pulseflow.stopScenario` | Stop running scenario |
 
 Built-in scenarios: `scrollStorm`, `routeThrash`, `listFlood`, `animationFlood`, `retainMemory`, `networkBurst` (stubbed unless you set `PulseFlowStressState.instance.onNetworkBurst`).
 
-Without this stub, Build/Raster/memory/CPU/timeline still work via VM Service; Problems explains that the probe is missing; Lab scenarios stay disabled.
+Without the package, Build/Raster/memory/CPU/timeline still work via VM Service; Problems explains that the probe is missing; Lab scenarios stay disabled.
 
 ## Bridge protocol (client ↔ bridge)
 

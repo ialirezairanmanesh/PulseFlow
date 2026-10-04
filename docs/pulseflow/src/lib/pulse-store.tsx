@@ -12,7 +12,7 @@ import {
 } from "react";
 import { PulseBridgeClient } from "@/lib/bridge-client";
 import { normalizeHotWidgetsMessage } from "@/lib/normalize-hot";
-import { computeBaselineMetrics } from "@/lib/problems";
+import { buildProblems, computeBaselineMetrics } from "@/lib/problems";
 import { downloadBase64 } from "@/lib/session-report";
 import type {
   BridgeHotWidgetsMessage,
@@ -24,6 +24,7 @@ import type {
   ExtensionInfo,
   GcEvent,
   HotWidgetsPayload,
+  LeakEntry,
   MemoryDiff,
   MemorySnapshot,
   MetricPoint,
@@ -105,6 +106,7 @@ type PulseContextValue = {
   memoryMessage?: string;
   timelineMarkers: TimelineMarker[];
   timelineMessage?: string;
+  leaks: LeakEntry[];
   baselines: SessionBaseline[];
   connect: (overrideUrl?: string) => void;
   disconnect: () => void;
@@ -169,6 +171,7 @@ export function PulseProvider({ children }: { children: ReactNode }) {
   const [memoryMessage, setMemoryMessage] = useState<string>();
   const [timelineMarkers, setTimelineMarkers] = useState<TimelineMarker[]>([]);
   const [timelineMessage, setTimelineMessage] = useState<string>();
+  const [leaks, setLeaks] = useState<LeakEntry[]>([]);
   const [baselines, setBaselines] = useState<SessionBaseline[]>([]);
 
   const clientRef = useRef<PulseBridgeClient | null>(null);
@@ -250,6 +253,7 @@ export function PulseProvider({ children }: { children: ReactNode }) {
     setMemoryMessage(undefined);
     setTimelineMarkers([]);
     setTimelineMessage(undefined);
+    setLeaks([]);
     setBaselines([]);
   }, []);
 
@@ -392,6 +396,9 @@ export function PulseProvider({ children }: { children: ReactNode }) {
                   : "application/json";
               downloadBase64(msg.fileName, msg.base64, mime);
             }
+            break;
+          case "leaks":
+            setLeaks(msg.available ? msg.leaked ?? [] : []);
             break;
         }
       },
@@ -595,10 +602,22 @@ export function PulseProvider({ children }: { children: ReactNode }) {
   );
 
   const captureBaseline = useCallback((label: string) => {
+    const problemCount = buildProblems({
+      hot: hotRef.current,
+      hotAvailable: hotAvailableRef.current,
+      latest: pointsRef.current.at(-1),
+      gcEvents: [...gcRef.current],
+      cpuProfile: cpuRef.current,
+      memoryDiff: memoryDiffRef.current,
+      network: [...networkRef.current],
+      points: pointsRef.current,
+      scenarioResult: scenarioResultRef.current,
+      scenarioRunning: scenarioRunningRef.current,
+    }).length;
     const baseline = computeBaselineMetrics({
       points: pointsRef.current,
       hot: hotRef.current,
-      problemCount: 0,
+      problemCount,
       label,
     });
     setBaselines((prev) => {
@@ -650,6 +669,7 @@ export function PulseProvider({ children }: { children: ReactNode }) {
       memoryMessage,
       timelineMarkers,
       timelineMessage,
+      leaks,
       baselines,
       connect,
       disconnect,
@@ -710,6 +730,7 @@ export function PulseProvider({ children }: { children: ReactNode }) {
       memoryMessage,
       timelineMarkers,
       timelineMessage,
+      leaks,
       baselines,
       connect,
       disconnect,

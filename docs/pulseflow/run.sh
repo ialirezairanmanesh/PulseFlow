@@ -13,6 +13,11 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! command -v dart >/dev/null 2>&1; then
+  echo "Dart SDK is required for the PulseFlow bridge (https://dart.dev/get-dart)." >&2
+  exit 1
+fi
+
 if [[ ! -d node_modules ]]; then
   echo "Installing dependencies…"
   npm install

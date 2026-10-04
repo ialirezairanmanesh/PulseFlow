@@ -1,0 +1,8 @@
+analyzer:
+  language:
+    strict-casts: false
+    strict-raw-types: false
+
+linter:
+  rules:
+    - prefer_final_locals

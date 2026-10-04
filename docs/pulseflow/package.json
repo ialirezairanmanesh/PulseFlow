@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "concurrently -k -n bridge,web -c teal,cyan \"npm run bridge\" \"next dev -p 3846 -H 0.0.0.0 --webpack\"",
-    "bridge": "tsx server/bridge.ts",
+    "bridge": "cd ../../pulseflow_bridge && dart run bin/pulseflow_bridge.dart",
+    "bridge:node": "tsx server/bridge.ts",
     "build": "next build",
     "start": "concurrently -k -n bridge,web -c teal,cyan \"npm run bridge\" \"next start -p 3846 -H 0.0.0.0\"",
     "lint": "eslint"

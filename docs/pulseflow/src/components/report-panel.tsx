@@ -23,6 +23,7 @@ export function ReportPanel() {
     network,
     scenarioResult,
     scenarioRunning,
+    leaks,
     baselines,
   } = usePulse();
 
@@ -106,6 +107,7 @@ export function ReportPanel() {
           <li>CPU hotspots: {cpuProfile?.topFunctions?.length ?? 0}</li>
           <li>HTTP samples: {network.length}</li>
           <li>Memory diff growers: {memoryDiff?.grew?.length ?? 0}</li>
+          <li>Leaked objects: {leaks.length}</li>
           <li>
             Last scenario:{" "}
             {scenarioResult

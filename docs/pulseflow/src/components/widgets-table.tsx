@@ -102,6 +102,7 @@ export function WidgetsTable() {
                 <tr className="border-b border-white/10">
                   <th className="py-2 font-medium">Widget</th>
                   <th className="py-2 font-medium">Route</th>
+                  <th className="py-2 font-medium">Source</th>
                   <th className="py-2 font-medium">Window</th>
                   <th className="py-2 font-medium">Session</th>
                   <th className="py-2 font-medium">Rate/s</th>
@@ -124,6 +125,14 @@ export function WidgetsTable() {
                       )}
                     </td>
                     <td className="py-2.5 font-mono text-[12px]">{w.route}</td>
+                    <td
+                      className="py-2.5 font-mono text-[11px] text-[var(--ink-faint)]"
+                      title={w.sourceUri ? `${w.sourceUri}:${w.sourceLine ?? 0}` : undefined}
+                    >
+                      {w.sourceUri
+                        ? `${w.sourceUri.split("/").pop()}${w.sourceLine ? `:${w.sourceLine}` : ""}`
+                        : "—"}
+                    </td>
                     <td className="py-2.5">{w.rebuildsWindow}</td>
                     <td className="py-2.5">{w.rebuildsSession}</td>
                     <td className="py-2.5">{w.ratePerSec.toFixed(1)}</td>

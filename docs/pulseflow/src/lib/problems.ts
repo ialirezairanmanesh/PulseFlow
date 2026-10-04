@@ -1,4 +1,5 @@
 import { isAppCpuFrame, tipForCpuHotspot } from "@/lib/cpu-profile";
+import { FRAME_BUDGET } from "@/lib/chart-utils";
 import type {
   CpuProfileSummary,
   GcEvent,
@@ -36,18 +37,23 @@ function hotRebuildProblem(w: WidgetRebuildStat, buildMs?: number): PerformanceP
     w.ratePerSec >= 15 || w.share >= 35 ? "high" : w.ratePerSec >= 8 || w.share >= 20 ? "medium" : "low";
   if (severity === "low") return null;
   const routeLabel = w.route && w.route !== "(unnamed)" ? ` on ${w.route}` : "";
+  const sourceLabel = w.sourceUri
+    ? ` — ${w.sourceUri}${w.sourceLine ? `:${w.sourceLine}` : ""}`
+    : "";
   return {
     id: `hot_rebuild:${w.id}`,
     severity,
     kind: "hot_rebuild",
     title: `${w.name} rebuilds heavily${routeLabel}`,
-    detail: `${w.ratePerSec.toFixed(1)}/s in the last window (${w.share.toFixed(1)}% of rebuilds)`,
+    detail: `${w.ratePerSec.toFixed(1)}/s in the last window (${w.share.toFixed(1)}% of rebuilds)${sourceLabel}`,
     action: tipForWidget(w.name, w.share),
     route: w.route,
     widget: w.name,
     ratePerSec: w.ratePerSec,
     share: w.share,
     relatedBuildMs: buildMs,
+    sourceUri: w.sourceUri,
+    sourceLine: w.sourceLine,
   };
 }
 
@@ -98,24 +104,25 @@ export function buildProblems(input: {
 
   const buildMs = latest?.buildMs ?? 0;
   const rasterMs = latest?.rasterMs ?? 0;
+  const budgetMs = latest?.buildBudgetMs ?? FRAME_BUDGET;
 
-  if (buildMs > 8) {
+  if (buildMs > budgetMs * 0.5) {
     problems.push({
       id: "high_build",
-      severity: buildMs > 12 ? "high" : "medium",
+      severity: buildMs > budgetMs * 0.75 ? "high" : "medium",
       kind: "high_build",
       title: "Build time is over budget",
-      detail: `Latest Build ${buildMs.toFixed(1)} ms (16.67 ms frame budget).`,
+      detail: `Latest Build ${buildMs.toFixed(1)} ms (${budgetMs.toFixed(1)} ms frame budget).`,
       action:
         "Focus on top rebuild widgets — limit setState scope, prefer const, split large widgets.",
       relatedBuildMs: buildMs,
     });
   }
 
-  if (rasterMs > 8) {
+  if (rasterMs > budgetMs * 0.5) {
     problems.push({
       id: "high_raster",
-      severity: rasterMs > 12 ? "high" : "medium",
+      severity: rasterMs > budgetMs * 0.75 ? "high" : "medium",
       kind: "high_raster",
       title: "Raster time is expensive",
       detail: `Latest Raster ${rasterMs.toFixed(1)} ms — paint/compositing is heavy.`,

@@ -17,6 +17,10 @@ export interface MetricPoint {
   jank: number;
   heapMb: number;
   externalMb: number;
+  /** Display refresh rate reported by the app probe, when available. */
+  refreshRate?: number;
+  /** Per-frame budget in ms (`1000 / refreshRate`), when available. */
+  buildBudgetMs?: number;
 }
 
 export interface GcEvent {
@@ -75,6 +79,10 @@ export interface WidgetRebuildStat {
   lastSeenMs: number;
   isFramework?: boolean;
   duringJank?: boolean;
+  /** Source file reported by the widget inspector (debug/profile). */
+  sourceUri?: string;
+  /** 1-based source line for the widget. */
+  sourceLine?: number;
 }
 
 export interface ScreenRebuildStat {
@@ -108,6 +116,8 @@ export interface PerformanceProblem {
   ratePerSec?: number;
   share?: number;
   relatedBuildMs?: number;
+  sourceUri?: string;
+  sourceLine?: number;
 }
 
 export interface HotWidgetsPayload {
@@ -337,6 +347,18 @@ export interface BridgeTimelineExportMessage {
   message?: string;
 }
 
+export interface LeakEntry {
+  className: string;
+  count: number;
+}
+
+export interface BridgeLeaksMessage {
+  type: "leaks";
+  available: boolean;
+  leaked: LeakEntry[];
+  message?: string;
+}
+
 export type BridgeServerMessage =
   | BridgeStatusMessage
   | BridgeMetricsMessage
@@ -350,7 +372,8 @@ export type BridgeServerMessage =
   | BridgeCpuProfileMessage
   | BridgeScenarioStatusMessage
   | BridgeMemoryProfileMessage
-  | BridgeTimelineExportMessage;
+  | BridgeTimelineExportMessage
+  | BridgeLeaksMessage;
 
 export type BridgeClientMessage =
   | { type: "connect"; url: string }
