@@ -1,15 +1,18 @@
 "use client";
 
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { buildProblems } from "@/lib/problems";
+import { buildProblems, computeBaselineMetrics } from "@/lib/problems";
 import {
   buildSessionReportJson,
   buildSessionReportMarkdown,
   downloadText,
 } from "@/lib/session-report";
+import type { SessionStats } from "@/lib/session-history";
 import { usePulse } from "@/lib/pulse-store";
 
 export function ReportPanel() {
+  const [saveMessage, setSaveMessage] = useState<string>();
   const {
     connected,
     mode,
@@ -79,6 +82,52 @@ export function ReportPanel() {
     downloadText(`pulseflow-report-${Date.now()}.md`, md, "text/markdown");
   };
 
+  const saveSession = async () => {
+    const baseline = computeBaselineMetrics({
+      points,
+      hot,
+      problemCount: problems.length,
+      label: "session",
+    });
+    const stats: SessionStats = {
+      problemCount: baseline.problemCount,
+      p95BuildMs: baseline.p95BuildMs,
+      p95RasterMs: baseline.p95RasterMs,
+      p95FrameMs: baseline.p95FrameMs,
+      rebuildRate: baseline.rebuildRate,
+      heapMb: baseline.heapMb,
+      jankRatio: baseline.jankRatio,
+    };
+    const report = buildSessionReportJson({
+      capturedAt: Date.now(),
+      mode,
+      isolateName,
+      problems,
+      cpuProfile,
+      memoryDiff,
+      network,
+      scenarioResult,
+      leaks,
+      baselines,
+    });
+    try {
+      const res = await fetch("/api/sessions", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          label: new Date().toLocaleString(),
+          mode,
+          isolateName,
+          stats,
+          report,
+        }),
+      });
+      setSaveMessage(res.ok ? "Session saved to history" : "Could not save session");
+    } catch {
+      setSaveMessage("Could not save session");
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -91,6 +140,9 @@ export function ReportPanel() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant="outline" disabled={!connected} onClick={() => void saveSession()}>
+            Save session
+          </Button>
           <Button size="sm" disabled={!connected} onClick={exportMd}>
             Export Markdown
           </Button>
@@ -104,6 +156,9 @@ export function ReportPanel() {
         <h3 className="mb-2 font-[family-name:var(--font-display)] text-lg tracking-tight text-[var(--ink)]">
           Session snapshot
         </h3>
+        {saveMessage && (
+          <p className="mb-2 text-sm text-[var(--ink-muted)]">{saveMessage}</p>
+        )}
         <ul className="space-y-1 text-sm text-[var(--ink-muted)]">
           <li>Problems ranked: {problems.length}</li>
           <li>CPU hotspots: {cpuProfile?.topFunctions?.length ?? 0}</li>
