@@ -135,6 +135,26 @@ Future<List<String>> _run(String exe, List<String> args, int timeoutMs) async {
   }
 }
 
+/// `/proc/<pid>/cmdline` is NUL-separated bytes — never use [List.toString].
+Future<String?> _readProcCmdline(String pid) async {
+  try {
+    final List<int> bytes = await File('/proc/$pid/cmdline').readAsBytes();
+    if (bytes.isEmpty) return null;
+    return utf8.decode(bytes, allowMalformed: true);
+  } catch (_) {
+    return null;
+  }
+}
+
+({String? appName, String? deviceName, String? packageName}) _parseAppNameFlag(String raw) {
+  final String? device =
+      RegExp(r'Device:\s*([^-]+?)(?:\s+-|$)', caseSensitive: false).firstMatch(raw)?.group(1)?.trim();
+  final String? pkg =
+      RegExp(r'Package:\s*(.+)$', caseSensitive: false).firstMatch(raw)?.group(1)?.trim();
+  final String? appName = pkg?.replaceAll('_', '-') ?? (raw.trim().isEmpty ? null : raw.trim());
+  return (appName: appName, deviceName: device, packageName: pkg);
+}
+
 List<Map<String, String>> _parseProcPorts(String content, bool ipv6) {
   final List<Map<String, String>> out = <Map<String, String>>[];
   final List<String> lines = content.split('\n');
@@ -217,12 +237,8 @@ Future<List<_FlutterRunHint>> _listFlutterRunHints() async {
     for (final FileSystemEntity entry in entries) {
       final String pid = entry.uri.pathSegments.where((String s) => s.isNotEmpty).last;
       if (!RegExp(r'^\d+$').hasMatch(pid)) continue;
-      String cmdline;
-      try {
-        cmdline = (await File('/proc/$pid/cmdline').readAsBytes()).toString();
-      } catch (_) {
-        continue;
-      }
+      final String? cmdline = await _readProcCmdline(pid);
+      if (cmdline == null) continue;
       final String spaced = cmdline.replaceAll('\u0000', ' ');
       if (!spaced.contains('flutter_tools.snapshot') || !spaced.contains('run')) {
         continue;
@@ -377,14 +393,9 @@ Future<List<_DdsHint>> _listDevelopmentServiceHints() async {
     for (final FileSystemEntity entry in entries) {
       final String pid = entry.uri.pathSegments.where((String s) => s.isNotEmpty).last;
       if (!RegExp(r'^\d+$').hasMatch(pid)) continue;
-      List<String> args;
-      try {
-        final String raw =
-            (await File('/proc/$pid/cmdline').readAsBytes()).toString();
-        args = raw.split('\u0000').where((String a) => a.isNotEmpty).toList();
-      } catch (_) {
-        continue;
-      }
+      final String? raw = await _readProcCmdline(pid);
+      if (raw == null) continue;
+      final List<String> args = raw.split('\u0000').where((String a) => a.isNotEmpty).toList();
       if (!args.any((String a) => a == 'development-service' || a.endsWith('development-service'))) {
         continue;
       }
@@ -401,18 +412,14 @@ Future<List<_DdsHint>> _listDevelopmentServiceHints() async {
       if (vmUri.isEmpty) continue;
       final Uri uri = Uri.parse(vmUri);
       if (!uri.hasPort) continue;
-      final String? device = RegExp(r'Device:\s*([^-]+?)(?:\s+-|\$)')
-          .firstMatch(appFlag)
-          ?.group(1)
-          ?.trim();
-      final String? pkg =
-          RegExp(r'Package:\s*(.+)\$').firstMatch(appFlag)?.group(1)?.trim();
+      final ({String? appName, String? deviceName, String? packageName}) named =
+          _parseAppNameFlag(appFlag);
       hints.add(_DdsHint(
         vmServiceHttpUrl: vmUri.endsWith('/') ? vmUri : '$vmUri/',
         vmPort: uri.port,
         authCode: uri.path.replaceAll(RegExp(r'^/+|/+$'), ''),
-        appName: pkg?.replaceAll('_', '-') ?? (appFlag.isNotEmpty ? appFlag : null),
-        deviceName: device,
+        appName: named.appName,
+        deviceName: named.deviceName,
       ));
     }
   } catch (_) {}
@@ -634,6 +641,31 @@ Future<DiscoveredApp?> _probePort(
       (RegExp('missing or invalid authentication code', caseSensitive: false)
               .hasMatch(res.body) ||
           res.status == 403);
+
+  // Auth-gated localhost Dart without ADB is almost always IDE tooling / raw VM
+  // behind DDS. Without an auth token, plain `/ws` cannot connect — hide it so
+  // DDS discovery (with the real URL) is not drowned out.
+  if (adb == null && needsAuth) {
+    final _Probe? probe = await probeVmOverWs(plainWs, 500);
+    if (probe == null) return null;
+    return DiscoveredApp(
+      id: _appId(plainWs),
+      name: _displayNameForPort(
+        port: port,
+        isolateName: probe.isolateName,
+        vmName: probe.vmName,
+        flutterHints: flutterHints,
+        needsAuth: false,
+      ),
+      wsUrl: plainWs,
+      httpUrl: httpUrl,
+      port: port,
+      source: 'port-scan',
+      isolateName: probe.isolateName,
+      connectable: true,
+      detail: 'Found by scanning localhost ports',
+    );
+  }
 
   final _Probe? probe = (looksDart || adb != null)
       ? await probeVmOverWs(plainWs, adb != null ? 900 : 700)
