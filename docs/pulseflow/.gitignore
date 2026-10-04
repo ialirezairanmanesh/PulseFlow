@@ -39,3 +39,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# dart artifacts (examples + local tooling)
+**/.dart_tool/
+/data/
+

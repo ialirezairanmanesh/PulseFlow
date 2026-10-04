@@ -8,7 +8,7 @@ Actionable Flutter performance lab: ranked problems, CPU/flamegraph, repeatable 
 
 - Next.js (App Router) + TypeScript + Tailwind + shadcn-style UI primitives
 - Recharts for live graphs; `react-flame-graph` for CPU flamegraphs
-- Node WebSocket bridge (`server/bridge.ts`) that proxies the browser to the Dart VM Service
+- Dart bridge (`../pulseflow_bridge`, `package:vm_service`) that proxies the browser to the Dart VM Service. The legacy Node bridge (`server/bridge.ts`) is kept as `npm run bridge:node`.
 
 Browsers often cannot open arbitrary `ws://` targets (mixed content / localhost quirks). The bridge is required: the UI talks to PulseFlow on port **3847**, and the bridge opens the VM Service socket for you.
 
@@ -137,11 +137,33 @@ Without the package, Build/Raster/memory/CPU/timeline still work via VM Service;
 
 | Command | Purpose |
 | --- | --- |
-| `npm run dev` | Bridge + Next.js on ports 3847 / 3846 |
-| `npm run bridge` | Bridge only |
+| `make run` (repo root) | Dashboard + Dart bridge, auto-installing deps |
+| `make test` (repo root) | Bridge + Flutter package + dashboard tests |
+| `npm run dev` | Dart bridge + Next.js on ports 3847 / 3846 |
+| `npm run bridge` | Dart bridge only |
+| `npm run bridge:node` | Legacy Node bridge (fallback) |
+| `npm run test` | Dashboard unit tests (Vitest) |
 | `npm run build` / `npm start` | Production build + serve |
 | `npm run lint` | ESLint |
 
-## CI sketch (not implemented)
+## Headless budget check
 
-A future headless mode could: start the bridge, connect to a profile VM URL, run `listFlood` / `scrollStorm`, capture a baseline, and fail if P95 build or jank ratio exceeds budgets. Export JSON from `/report` is the current handoff artifact.
+`pulseflow_check` connects to a running profile app, runs scenarios, and exits non-zero when
+P95 build/raster or the jank ratio exceeds budgets:
+
+```bash
+make check VM=ws://127.0.0.1:8181/AUTH=/ws ARGS="--max-p95-build 8 --max-jank-ratio 0.2"
+# or directly:
+cd pulseflow_bridge && dart run bin/pulseflow_check.dart --vm "$URL" --out report.json
+```
+
+Options: `--scenarios`, `--duration-ms`, `--max-p95-build`, `--max-p95-raster`,
+`--max-jank-ratio`, `--out`, `--json`. Exit codes: `0` pass, `1` budget violation, `2` setup error.
+Requires a debug/profile app with `registerPulseFlow()` — the CLI does not launch a device.
+
+## CPU export
+
+After recording a CPU profile, **Export speedscope** on `/cpu` downloads a
+`.speedscope.json` you can open at [speedscope.app](https://www.speedscope.app) for offline
+sharing (stacks are emitted root-first). The **Leaks** tab on `/memory` reports outstanding
+(created-but-not-disposed) objects via `ext.pulseflow.getLeakReport` (debug/profile only).
