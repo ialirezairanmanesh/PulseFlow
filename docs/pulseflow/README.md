@@ -51,12 +51,20 @@ Use **Try demo mode** to explore every lab surface without a Flutter app.
 | `/widgets` | Rebuild table (route, app-only, during-jank filters) |
 | `/frames` | Build/Raster charts, markers, Export Perfetto |
 | `/cpu` | CPU record (3/5/10s), top functions, flamegraph |
-| `/memory` | Heap chart + Snapshots / Diff tabs |
+| `/memory` | Heap chart + Snapshots / Diff / Leaks tabs |
 | `/network` | Full HTTP list, waterfall, slowest endpoints |
 | `/tools` | Lab: stress params, scenarios, before/after baselines |
-| `/report` | Markdown/JSON export + baseline compare |
+| `/report` | Markdown/JSON export, Save session, baseline compare |
+| `/history` | Saved sessions + stat-by-stat comparison |
 
 The bridge WebSocket is shared across pages (React context) — route changes do not reconnect.
+
+## Session history
+
+**Save session** on `/report` persists a snapshot (stats + export payload) to `.data/sessions.json`
+on the host via `/api/sessions` (list/create) and `/api/sessions/[id]` (get/delete). The `/history`
+page lists saved sessions; select two to compare P95 build/raster/frame, rebuild rate, heap, jank
+ratio, and problem count (deltas mark improvements). The store keeps the latest 50 sessions.
 
 ## Widget probe + scenarios (Flutter package)
 
