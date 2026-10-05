@@ -54,7 +54,7 @@ Use **Try demo mode** to explore every lab surface without a Flutter app.
 | `/memory` | Heap chart + Snapshots / Diff / Leaks tabs |
 | `/network` | Full HTTP list, waterfall, slowest endpoints |
 | `/tools` | Lab: stress params, scenarios, before/after baselines |
-| `/report` | Markdown/JSON export, Save session, baseline compare |
+| `/report` | Agent report (copy/download), Markdown/JSON export, Save session, baselines |
 | `/history` | Saved sessions + stat-by-stat comparison |
 
 The bridge WebSocket is shared across pages (React context) — route changes do not reconnect.
@@ -65,6 +65,15 @@ The bridge WebSocket is shared across pages (React context) — route changes do
 on the host via `/api/sessions` (list/create) and `/api/sessions/[id]` (get/delete). The `/history`
 page lists saved sessions; select two to compare P95 build/raster/frame, rebuild rate, heap, jank
 ratio, and problem count (deltas mark improvements). The store keeps the latest 50 sessions.
+
+## Agent report
+
+**Copy agent report** on `/report` builds a single self-contained Markdown document and copies it
+to the clipboard — paste it straight into an AI agent. It opens with a reviewer prompt, then the
+ranked problems (with causes and source links), rebuild roots, errors, oversized images, CPU
+hotspots, memory growth, slow HTTP, top rebuilding widgets, and session stats. **Agent .md**
+downloads the same document as a file. The report is capped per section to stay within token
+budgets; `buildAgentReportJson` provides the equivalent structured payload.
 
 ## Widget probe + scenarios (Flutter package)
 

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { buildAgentReportMarkdown } from "@/lib/agent-report";
 import { Button } from "@/components/ui/button";
 import { buildProblems, computeBaselineMetrics } from "@/lib/problems";
 import {
@@ -27,6 +28,9 @@ export function ReportPanel() {
     scenarioResult,
     scenarioRunning,
     leaks,
+    rebuildCauses,
+    appErrors,
+    images,
     baselines,
   } = usePulse();
 
@@ -128,6 +132,61 @@ export function ReportPanel() {
     }
   };
 
+  const agentInput = () => {
+    const latest = points.at(-1);
+    const baseline = computeBaselineMetrics({
+      points,
+      hot,
+      problemCount: problems.length,
+      label: "agent",
+    });
+    const stats: SessionStats = {
+      problemCount: baseline.problemCount,
+      p95BuildMs: baseline.p95BuildMs,
+      p95RasterMs: baseline.p95RasterMs,
+      p95FrameMs: baseline.p95FrameMs,
+      rebuildRate: baseline.rebuildRate,
+      heapMb: baseline.heapMb,
+      jankRatio: baseline.jankRatio,
+    };
+    return {
+      capturedAt: Date.now(),
+      mode,
+      isolateName,
+      refreshRate: latest?.refreshRate,
+      budgetMs: latest?.buildBudgetMs,
+      problems,
+      rebuildRoots: rebuildCauses?.roots,
+      errors: appErrors,
+      imageStats: images,
+      cpuProfile,
+      memoryDiff,
+      network,
+      hot,
+      stats,
+      baselines,
+    };
+  };
+
+  const copyAgentReport = async () => {
+    const md = buildAgentReportMarkdown(agentInput());
+    try {
+      await navigator.clipboard.writeText(md);
+      setSaveMessage("Agent report copied to clipboard");
+    } catch {
+      downloadText(`pulseflow-agent-${Date.now()}.md`, md, "text/markdown");
+      setSaveMessage("Clipboard blocked — downloaded instead");
+    }
+  };
+
+  const downloadAgentReport = () => {
+    downloadText(
+      `pulseflow-agent-${Date.now()}.md`,
+      buildAgentReportMarkdown(agentInput()),
+      "text/markdown",
+    );
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -140,10 +199,16 @@ export function ReportPanel() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button size="sm" disabled={!connected} onClick={() => void copyAgentReport()}>
+            Copy agent report
+          </Button>
+          <Button size="sm" variant="outline" disabled={!connected} onClick={downloadAgentReport}>
+            Agent .md
+          </Button>
           <Button size="sm" variant="outline" disabled={!connected} onClick={() => void saveSession()}>
             Save session
           </Button>
-          <Button size="sm" disabled={!connected} onClick={exportMd}>
+          <Button size="sm" variant="secondary" disabled={!connected} onClick={exportMd}>
             Export Markdown
           </Button>
           <Button size="sm" variant="secondary" disabled={!connected} onClick={exportJson}>
