@@ -83,8 +83,28 @@ const FRAMEWORK_EXACT = new Set([
   "SelectableRegion",
   "AnimatedBuilder",
   "AnimatedContainer",
+  "AnimatedOpacity",
+  "AnimatedPadding",
+  "AnimatedPositioned",
+  "AnimatedAlign",
+  "AnimatedSize",
+  "AnimatedSwitcher",
+  "AnimatedDefaultTextStyle",
+  "AnimatedPhysicalModel",
+  "AnimatedTheme",
+  "AnimatedCrossFade",
   "ListenableBuilder",
   "ValueListenableBuilder",
+  "FadeTransition",
+  "ScaleTransition",
+  "SizeTransition",
+  "SlideTransition",
+  "RotationTransition",
+  "DecoratedBoxTransition",
+  "RelativePositionedTransition",
+  // Common third-party shells that dominate ranks without being the app root.
+  "SvgPicture",
+  "VectorGraphic",
 ]);
 
 /** Private Flutter elements and known Material/focus/ink/scroll shells. */
@@ -109,6 +129,9 @@ export function isFrameworkWidgetName(name: string | undefined | null): boolean 
   if (FRAMEWORK_EXACT.has(name)) return true;
   // Flutter private Element/RenderObject wrappers (e.g. _FocusInheritedScope).
   if (name.startsWith("_")) return true;
+  // Implicitly-animated / transition shells from the framework.
+  if (/^Animated[A-Z]/.test(name)) return true;
+  if (/Transition$/.test(name)) return true;
   return FRAMEWORK_PREFIXES.some((p) => name.startsWith(p));
 }
 

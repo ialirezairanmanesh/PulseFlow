@@ -146,6 +146,50 @@ describe("buildProblems", () => {
     expect(problems.some((p) => p.kind === "hot_rebuild")).toBe(false);
   });
 
+  it("flags screen-level scroll pressure when route rebuild rate dominates", () => {
+    const problems = buildProblems({
+      hot: hotPayload(
+        [widget({ name: "InvoiceTableDisplayItem", ratePerSec: 0.1, share: 1 })],
+        {
+          screens: [
+            {
+              route: "RawView",
+              rebuildsWindow: 593,
+              ratePerSec: 59.3,
+              share: 75,
+              topWidgets: [],
+            },
+          ],
+        },
+      ),
+      hotAvailable: true,
+      latest: point({ buildMs: 40, buildBudgetMs: 8.33 }),
+      points: Array.from({ length: 10 }, () => point({ jank: 1, buildMs: 40, buildBudgetMs: 8.33 })),
+      gcEvents: [],
+    });
+    const screen = problems.find((p) => p.id.startsWith("screen_rebuild:"));
+    expect(screen?.route).toBe("RawView");
+    expect(screen?.severity).toBe("high");
+    expect(screen?.action).toMatch(/scroll|list/i);
+    expect(problems.some((p) => p.widget === "InvoiceTableDisplayItem")).toBe(false);
+  });
+
+  it("ignores low-rate Animated shells even when marked during jank", () => {
+    const problems = buildProblems({
+      hot: hotPayload([
+        widget({
+          name: "AnimatedDefaultTextStyle",
+          ratePerSec: 1,
+          share: 5,
+          duringJank: true,
+        }),
+      ]),
+      hotAvailable: true,
+      gcEvents: [],
+    });
+    expect(problems.some((p) => p.kind === "hot_rebuild")).toBe(false);
+  });
+
   it("attaches widget source locations", () => {
     const problems = buildProblems({
       hot: hotPayload([
@@ -214,7 +258,7 @@ describe("computeBaselineMetrics", () => {
 
 describe("tipForWidget", () => {
   it("suggests virtualization for lists", () => {
-    expect(tipForWidget("ListView", 10)).toMatch(/virtuali/i);
+    expect(tipForWidget("ListView", 10)).toMatch(/virtuali|scroll|list/i);
   });
 
   it("adds a jank note when the widget rebuilds on janky frames", () => {

@@ -15,6 +15,13 @@ describe("isFrameworkWidgetName", () => {
     expect(isFrameworkWidgetName("_ActionsScope")).toBe(true);
   });
 
+  it("flags Animated* and *Transition shells", () => {
+    expect(isFrameworkWidgetName("AnimatedDefaultTextStyle")).toBe(true);
+    expect(isFrameworkWidgetName("AnimatedPhysicalModel")).toBe(true);
+    expect(isFrameworkWidgetName("ScaleTransition")).toBe(true);
+    expect(isFrameworkWidgetName("SvgPicture")).toBe(true);
+  });
+
   it("leaves app widgets alone", () => {
     expect(isFrameworkWidgetName("InvoiceTable")).toBe(false);
     expect(isFrameworkWidgetName("TabCubitScope")).toBe(false);

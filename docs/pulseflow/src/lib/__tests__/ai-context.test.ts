@@ -112,6 +112,21 @@ describe("buildChatMessages", () => {
     expect(messages[0].content).toMatch(/frame-budget/i);
     expect(messages[0].content).toMatch(/Findings at 5/i);
     expect(messages[0].content).toMatch(/never invent/i);
+    expect(messages[0].content).toMatch(/scroll\/list/i);
+  });
+
+  it("omits near-idle app widgets from the problems AI brief", () => {
+    const context = buildSectionContext(
+      "problems",
+      state({
+        hot: hotPayload([
+          widget({ name: "InvoiceTableDisplayItem", ratePerSec: 0.1, share: 1 }),
+          widget({ name: "HotCard", ratePerSec: 22, share: 40 }),
+        ]),
+      }),
+    );
+    expect(context).toContain("HotCard");
+    expect(context).not.toContain("InvoiceTableDisplayItem");
   });
 
   it("keeps prior turns between the system prompt and the new question", () => {

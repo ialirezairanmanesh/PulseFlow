@@ -99,7 +99,7 @@ export const QUICK_PROMPTS = {
 } as const;
 
 const DEFAULT_QUESTION =
-  "Write a concise, accurate performance review. Prefer app widgets over framework noise. Cap Findings at 5 and Fixes at 3. Separate frame-budget issues from network latency. Do not invent numbers, libraries, or file paths.";
+  "Write a concise, accurate performance review. Prefer screen/route rebuild totals and high-rate app widgets over 0–1/s Animated shells. If jank spikes while scrolling a table/list, say so. Cap Findings at 5 and Fixes at 3. Separate frame-budget issues from network latency. Do not invent numbers, libraries, or file paths.";
 
 export function sectionFromPath(pathname: string): AiSection {
   const clean = pathname.replace(/\/+$/, "");
@@ -227,15 +227,22 @@ function formatWidgetLine(w: {
 
 function widgetsBlock(hot?: HotWidgetsPayload | null, opts?: { appOnly?: boolean }): string {
   const raw = hot?.widgets ?? [];
-  const widgets = opts?.appOnly ? raw.filter((w) => !isFrameworkWidget(w)) : raw;
+  let widgets = opts?.appOnly ? raw.filter((w) => !isFrameworkWidget(w)) : raw;
+  // Drop near-idle rows so the model cannot invent "HIGH" from 0.1–1.0/s shells.
+  if (opts?.appOnly) {
+    widgets = widgets.filter((w) => w.ratePerSec >= 3 || w.share >= 8);
+  }
+  widgets = [...widgets].sort(
+    (a, b) => b.ratePerSec - a.ratePerSec || b.share - a.share,
+  );
   if (!widgets.length) {
     return opts?.appOnly && raw.length
-      ? "## App widget rebuilds\n_only framework shells in this window; see rebuild causes on Problems_"
+      ? "## App widget rebuilds\n_no meaningful app rebuild rate in this window; use screen totals below_"
       : "## Widget rebuilds\n_no widget data (probe may be missing)_";
   }
   const lines = [
     `## ${opts?.appOnly ? "App widget" : "Widget"} rebuilds (window ${((hot?.windowMs ?? 10000) / 1000).toFixed(0)}s)`,
-    "_Cite as `WidgetName` on `/route` (file:line when shown). Prefer app widgets; skip framework shells._",
+    "_Cite as `WidgetName` on `/route` (file:line when shown). Prefer app widgets; skip framework shells. Widgets under ~3/s are not primary causes of 100ms+ build._",
   ];
   if (hot?.currentRoute) {
     lines.push(`- Current route/screen: **${hot.currentRoute}**`);
@@ -243,10 +250,11 @@ function widgetsBlock(hot?: HotWidgetsPayload | null, opts?: { appOnly?: boolean
   lines.push(...widgets.slice(0, MAX.widgets).map(formatWidgetLine));
   const screens = hot?.screens ?? [];
   if (screens.length) {
-    lines.push("", "### By screen / route");
+    lines.push("", "### By screen / route (strongest scroll/interaction signal)");
     for (const s of screens.slice(0, 8)) {
       const tops = (s.topWidgets ?? [])
         .filter((w) => !opts?.appOnly || !isFrameworkWidget(w))
+        .filter((w) => w.ratePerSec >= 3 || w.share >= 8)
         .slice(0, 3)
         .map((w) => `\`${w.name}\``)
         .join(", ");
@@ -403,9 +411,12 @@ export function systemPrompt(section: AiSection, language: AiLanguage): string {
     "Always finish a complete answer — never stop mid-sentence, mid-list, or mid-heading.",
     "Accuracy rules:",
     "- Keep **frame-budget** issues (build/raster/jank/rebuilds/CPU) separate from **network** latency. Slow HTTP is UX wait; do not claim it causes high build ms unless rebuilds are tied to the response landing.",
-    "- Prefer app widgets over framework/private (`_…`) shells. Do not list Focus/Ink/Selection/Actions internals as separate HIGH findings when an app rebuild root is named.",
+    "- Prefer app widgets over framework/private (`_…`) / Animated* / *Transition shells. Do not list Focus/Ink/Selection/Actions/AnimatedDefaultTextStyle internals as separate HIGH findings.",
+    "- When a **screen/route** shows a high rebuild rate (e.g. 40+/s or ≥40% share) alongside high P95 build or jank, treat that as **scroll/list interaction cost** on that screen — not as one tiny 0.1–1/s child widget causing the whole budget miss.",
+    "- Never claim a widget under ~3 rebuilds/s is the primary cause of 100ms+ P95 build. Cite screen totals and high-rate app widgets first.",
     "- HTTP evidence is latency in ms only — never invent an event rate from latency.",
     "- Do not multiply relatedBuild / session build cost across widgets; that cost is frame-wide when present.",
+    "- Do not blame SvgPicture/GC for frame jank unless image/memory metrics in the brief support it.",
     "- Cap ## Findings at 5 bullets and ## Fixes at 3. Rank by measured impact. Do not invent Hive/dio interceptors/etc. unless the brief already mentions them.",
     "When citing UI issues, name them as `WidgetName` on `/route` and include `file:line` when present.",
     "Structure every answer with these Markdown headings, in order:",

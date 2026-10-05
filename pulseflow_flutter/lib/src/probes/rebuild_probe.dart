@@ -94,6 +94,8 @@ const Set<String> _frameworkWidgets = <String>{
 /// True for Flutter/Material shells and private Element wrappers (`_Foo`).
 bool isFrameworkWidgetName(String name) {
   if (name.startsWith('_')) return true;
+  if (name.startsWith('Animated')) return true;
+  if (name.endsWith('Transition')) return true;
   return _frameworkWidgets.contains(name);
 }
 

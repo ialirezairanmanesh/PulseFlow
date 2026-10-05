@@ -20,11 +20,11 @@ import type {
 export function tipForWidget(
   name: string,
   share: number,
-  ctx?: { ratePerSec?: number; duringJank?: boolean },
+  ctx?: { ratePerSec?: number; duringJank?: boolean; scrollLikely?: boolean },
 ): string {
   const jankNote = ctx?.duringJank ? " It is rebuilding on janky frames — fix this first." : "";
-  if (/ListView|GridView|Sliver/i.test(name)) {
-    return `Keep the list virtualized; const/memo list items.${jankNote}`;
+  if (ctx?.scrollLikely || /ListView|GridView|Sliver|ScrollView|Table|DataTable/i.test(name)) {
+    return `Scroll/list hot path: keep items cheap and virtualized, stable keys, avoid ancestor setState/Animated* while scrolling.${jankNote}`;
   }
   if (/StreamBuilder|FutureBuilder|Animated/i.test(name)) {
     return `Narrow listeners; push state lower in the tree.${jankNote}`;
@@ -159,7 +159,7 @@ export function buildProblems(input: {
       title: "Build time is over budget",
       detail: `Latest Build ${buildMs.toFixed(1)} ms (${budgetMs.toFixed(1)} ms frame budget).`,
       action:
-        "Focus on top rebuild widgets — limit setState scope, prefer const, split large widgets.",
+        "Focus on the hottest screen/route and its list/table items — limit setState scope while scrolling, prefer const, split large widgets.",
       relatedBuildMs: buildMs,
     });
   }
@@ -185,6 +185,41 @@ export function buildProblems(input: {
       title: "Frequent garbage collection",
       detail: `${gcEvents.length} GC events in the recent buffer.`,
       action: "Reduce short-lived allocations (temp lists, image decode, large string builds).",
+    });
+  }
+
+  const recent = points.slice(-20);
+  const jankRatio =
+    recent.length > 0 ? recent.filter((p) => p.jank).length / recent.length : 0;
+  const framePressure = buildMs > budgetMs * 0.5 || jankRatio >= 0.25;
+
+  // Screen-level scroll/interaction pressure — stronger signal than 1/s Animated shells.
+  const topScreen = hot?.available ? hot.screens?.[0] : undefined;
+  if (
+    topScreen &&
+    framePressure &&
+    topScreen.ratePerSec >= 25 &&
+    topScreen.share >= 40
+  ) {
+    const scrollLikely = true;
+    problems.push({
+      id: `screen_rebuild:${topScreen.route}`,
+      severity:
+        topScreen.ratePerSec >= 40 || jankRatio >= 0.5 || buildMs > budgetMs
+          ? "high"
+          : "medium",
+      kind: "hot_rebuild",
+      title: `Heavy rebuild pressure on ${topScreen.route}`,
+      detail: `${topScreen.ratePerSec.toFixed(1)}/s (${topScreen.share.toFixed(1)}% of rebuilds) on this screen — typical of scroll/list layout thrash.`,
+      action: tipForWidget(topScreen.route, topScreen.share, {
+        ratePerSec: topScreen.ratePerSec,
+        duringJank: jankRatio >= 0.25,
+        scrollLikely,
+      }),
+      route: topScreen.route,
+      ratePerSec: topScreen.ratePerSec,
+      share: topScreen.share,
+      duringJank: jankRatio >= 0.25,
     });
   }
 
@@ -225,9 +260,6 @@ export function buildProblems(input: {
     }
   }
 
-  const recent = points.slice(-20);
-  const jankRatio =
-    recent.length > 0 ? recent.filter((p) => p.jank).length / recent.length : 0;
   if (
     (scenarioRunning || scenarioResult?.ok) &&
     jankRatio >= 0.35 &&
