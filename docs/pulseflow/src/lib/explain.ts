@@ -27,13 +27,23 @@ export function explainProblem(p: PerformanceProblem, ctx: ExplainContext): stri
     case "hot_rebuild": {
       const cause =
         p.cause && p.cause !== p.widget ? `Because ${p.cause} rebuilds, ` : "";
+      const where =
+        p.widget && p.route && p.route !== "(unnamed)"
+          ? `\`${p.widget}\` on ${p.route}`
+          : p.widget
+            ? `\`${p.widget}\`${p.route === "(unnamed)" ? " on an unnamed route" : ""}`
+            : "this widget";
+      const source =
+        p.sourceUri != null
+          ? ` (${p.sourceUri}${p.sourceLine != null ? `:${p.sourceLine}` : ""})`
+          : "";
       const cost = p.relatedBuildMs
         ? ` That build costs about ${ms(p.relatedBuildMs)} per frame against a ${budget} ms budget`
         : "";
       const consequence = p.duringJank
         ? ", and it lands on janky frames — that is why you see dropped frames while interacting."
         : ", so frames get close to the budget.";
-      return `${cause}${p.widget ?? "this widget"} rebuilds ${fmt(p.ratePerSec)}×/s — ${fmt(
+      return `${cause}${where}${source} rebuilds ${fmt(p.ratePerSec)}×/s — ${fmt(
         p.share,
       )}% of all rebuilds.${cost}${consequence}`;
     }

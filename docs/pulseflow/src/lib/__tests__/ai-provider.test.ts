@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildRequest, extractDelta, parseSse, redact } from "@/lib/server/ai-provider";
+import {
+  buildRequest,
+  extractDelta,
+  MAX_OUTPUT_TOKENS,
+  parseSse,
+  redact,
+} from "@/lib/server/ai-provider";
 
 describe("parseSse", () => {
   it("splits complete frames and keeps the partial buffer", () => {
@@ -60,6 +66,9 @@ describe("buildRequest", () => {
     );
     expect(request.url).toBe("https://api.x/v1/chat/completions");
     expect(request.headers.authorization).toBe("Bearer k");
+    const body = request.body as { max_tokens: number; stream: boolean };
+    expect(body.max_tokens).toBe(MAX_OUTPUT_TOKENS);
+    expect(body.stream).toBe(true);
   });
 
   it("builds an Anthropic request with x-api-key and a system field", () => {
@@ -71,7 +80,7 @@ describe("buildRequest", () => {
     expect(request.headers["x-api-key"]).toBe("k");
     expect(request.headers["anthropic-version"]).toBe("2023-06-01");
     const body = request.body as { max_tokens: number; system: string; messages: unknown[] };
-    expect(body.max_tokens).toBe(1024);
+    expect(body.max_tokens).toBe(MAX_OUTPUT_TOKENS);
     expect(body.system).toBe("sys");
     expect(body.messages).toHaveLength(1);
   });
@@ -89,6 +98,8 @@ describe("buildRequest", () => {
     expect(request.url).toContain("gemini-1.5-flash:streamGenerateContent");
     expect(request.url).toContain("alt=sse");
     expect(request.url).toContain("key=k");
+    const body = request.body as { generationConfig: { maxOutputTokens: number } };
+    expect(body.generationConfig.maxOutputTokens).toBe(MAX_OUTPUT_TOKENS);
   });
 });
 

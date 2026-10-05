@@ -40,9 +40,18 @@ describe("buildSectionContext", () => {
     expect(context).not.toContain("NaN");
   });
 
-  it("summarises frame timing", () => {
-    const context = buildSectionContext("frames", state());
+  it("summarises frame timing and still attaches widget/route evidence", () => {
+    const context = buildSectionContext(
+      "frames",
+      state({
+        hot: hotPayload([
+          widget({ name: "InvoiceCard", route: "/invoices", ratePerSec: 22, share: 40 }),
+        ]),
+      }),
+    );
     expect(context).toContain("P95 build");
+    expect(context).toContain("InvoiceCard");
+    expect(context).toContain("/invoices");
   });
 
   it("degrades gracefully with no data", () => {
@@ -55,20 +64,45 @@ describe("buildSectionContext", () => {
     const context = buildSectionContext("report", state());
     expect(context).toContain("PulseFlow agent report");
   });
+
+  it("names widgets with route and source in the widgets section", () => {
+    const context = buildSectionContext(
+      "widgets",
+      state({
+        hot: hotPayload([
+          widget({
+            name: "InvoiceCard",
+            route: "/invoices",
+            ratePerSec: 22,
+            share: 40,
+            sourceUri: "package:app/invoice.dart",
+            sourceLine: 42,
+            cause: "InvoiceList",
+          }),
+        ]),
+      }),
+    );
+    expect(context).toContain("`InvoiceCard` on /invoices");
+    expect(context).toContain("package:app/invoice.dart:42");
+    expect(context).toContain("cause InvoiceList");
+  });
 });
 
 describe("buildChatMessages", () => {
   it("prepends a system prompt and honours the language", () => {
     const messages = buildChatMessages("problems", "DATA", "why?", "en");
     expect(messages[0].role).toBe("system");
-    expect(messages[0].content).toContain("Reply in English");
+    expect(messages[0].content).toContain("professional English");
+    expect(messages[0].content).toContain("## Findings");
+    expect(messages[0].content).toContain("never stop mid-sentence");
     expect(messages[1].content).toContain("DATA");
     expect(messages[1].content).toContain("why?");
   });
 
   it("uses a default instruction when no question is given", () => {
     const messages = buildChatMessages("network", "DATA");
-    expect(messages[1].content).toContain("fix first");
+    expect(messages[1].content).toContain("complete professional");
+    expect(messages[1].content).toContain("widget");
   });
 
   it("keeps prior turns between the system prompt and the new question", () => {

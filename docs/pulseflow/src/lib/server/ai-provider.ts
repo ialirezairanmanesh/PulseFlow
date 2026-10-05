@@ -1,6 +1,9 @@
 import type { ChatMessage } from "@/lib/ai-context";
 import { resolveSettings, type AiProvider, type AiSettings } from "@/lib/ai-providers";
 
+/** Enough room for a full structured review (summary + findings + fixes + verify). */
+export const MAX_OUTPUT_TOKENS = 8192;
+
 export interface SseFrame {
   event?: string;
   data: string;
@@ -84,7 +87,7 @@ export function buildRequest(
     return {
       url: `${baseUrl}/chat/completions`,
       headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
-      body: { model, messages, stream: true },
+      body: { model, messages, stream: true, max_tokens: MAX_OUTPUT_TOKENS },
     };
   }
 
@@ -103,7 +106,13 @@ export function buildRequest(
         "x-api-key": apiKey,
         "anthropic-version": "2023-06-01",
       },
-      body: { model, max_tokens: 1024, system, messages: rest, stream: true },
+      body: {
+        model,
+        max_tokens: MAX_OUTPUT_TOKENS,
+        system,
+        messages: rest,
+        stream: true,
+      },
     };
   }
 
@@ -122,7 +131,11 @@ export function buildRequest(
       apiKey,
     )}`,
     headers: { "content-type": "application/json" },
-    body: { contents, ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}) },
+    body: {
+      contents,
+      generationConfig: { maxOutputTokens: MAX_OUTPUT_TOKENS },
+      ...(system ? { systemInstruction: { parts: [{ text: system }] } } : {}),
+    },
   };
 }
 

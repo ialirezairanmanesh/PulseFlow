@@ -137,6 +137,8 @@ export interface HotWidgetsPayload {
   windowMs: number;
   totalRebuildsWindow: number;
   totalRebuildsSession: number;
+  /** Most recently observed route/screen label from the widget probe. */
+  currentRoute?: string;
   widgets: WidgetRebuildStat[];
   screens: ScreenRebuildStat[];
   problems?: PerformanceProblem[];

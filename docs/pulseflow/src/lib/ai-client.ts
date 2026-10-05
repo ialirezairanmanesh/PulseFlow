@@ -89,7 +89,11 @@ export async function streamAiChat(options: StreamAiOptions): Promise<void> {
   const decoder = new TextDecoder();
   for (;;) {
     const { value, done } = await reader.read();
-    if (done) break;
+    if (done) {
+      const rest = decoder.decode();
+      if (rest) options.onDelta(rest);
+      break;
+    }
     options.onDelta(decoder.decode(value, { stream: true }));
   }
 }

@@ -90,9 +90,9 @@ The dashboard can review any section with **your own AI provider key** (none is 
   **Google Gemini** — set the model, paste the key, choose the answer language (فارسی / English), then
   **Test connection**.
 - **Use** the **Ask AI** button in the header on any page: a drawer opens, detects the current section
-  (Problems, Widgets, Frames, CPU, Memory, Network, Report), sends that view's data, and streams back a
-  plain-language explanation with prioritized fixes; follow-up questions keep the conversation. The
-  message says what to re-measure so you can confirm a fix.
+  (Problems, Widgets, Frames, CPU, Memory, Network, Report), sends that view's data plus widget/route
+  evidence when available, and streams a full structured review (Summary → Findings → Fixes → Verify).
+  Answers name widgets as `` `Widget` on `/route` ``; follow-ups keep the conversation.
 
 **Privacy:** the key is stored server-side in `.data/ai-settings.json` (git-ignored) and is used only by
 the local `/api/ai/*` proxy routes — it is never sent to the browser, and responses/errors redact it.
@@ -139,7 +139,7 @@ Hot-restart, reconnect PulseFlow. The bridge will:
 
 1. Start `ext.pulseflow.startWidgetProbe`
 2. Poll `ext.pulseflow.getFrameStats` (accurate build/raster/vsync + refresh rate)
-3. Poll `ext.pulseflow.getHotWidgets` about every second — ranked by stable id (`route|widget|key`) over a **10s rolling window**, with source locations when available
+3. Poll `ext.pulseflow.getHotWidgets` about every second — ranked by stable id (`route|widget|key`) over a **10s rolling window**, with source locations when available. Route labels resolve from `RouteSettings.name`, then the `Router` URI (`MaterialApp.router` / go_router), then the nearest `*Page`/`*Screen` ancestor (not only named routes)
 4. Poll `ext.pulseflow.getNetworkLog` and merge app-captured requests into the network panel
 5. Detect scenario RPCs when present
 

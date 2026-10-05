@@ -3,6 +3,7 @@ import 'dart:collection';
 import 'package:flutter/widgets.dart';
 
 import 'rebuild_cause.dart';
+import 'route_label.dart';
 import 'widget_source.dart';
 
 const int _windowMs = 10000;
@@ -207,16 +208,7 @@ class RebuildProbe {
   void _record(Element element) {
     final String name = element.widget.runtimeType.toString();
     final String? keyLabel = _keyLabel(element.widget.key);
-    String route = '(unnamed)';
-    try {
-      final ModalRoute<dynamic>? modal = ModalRoute.of(element);
-      final String? nameSetting = modal?.settings.name;
-      if (nameSetting != null && nameSetting.isNotEmpty) {
-        route = nameSetting;
-      }
-    } catch (_) {
-      // Element may not be mounted in a route.
-    }
+    final String route = resolveRouteLabel(element);
     final String id = '$route|$name|${keyLabel ?? ''}';
     final DateTime now = DateTime.now();
     lastRoute = route;
@@ -496,6 +488,7 @@ class RebuildProbe {
       'totalRebuildsWindow': totalWindow,
       'totalRebuildsSession': totalSession,
       'totalRebuilds': totalWindow,
+      'currentRoute': lastRoute,
       'widgets': top,
       'screens': screens,
     };

@@ -13,6 +13,11 @@ export function normalizeHotWidgetsMessage(
   const windowSec = windowMs / 1000;
   const duringJank = Boolean(msg.duringJank);
 
+  const totalRebuildsWindowHint =
+    msg.totalRebuildsWindow ??
+    msg.totalRebuilds ??
+    (msg.widgets ?? []).reduce((a, w) => a + (w.rebuildsWindow ?? 0), 0);
+
   const widgets: WidgetRebuildStat[] = (msg.widgets ?? []).map((w) => {
     const anyW = w as WidgetRebuildStat & {
       rebuilds?: number;
@@ -28,6 +33,13 @@ export function normalizeHotWidgetsMessage(
     const rebuildsSession = anyW.rebuildsSession ?? rebuildsWindow;
     const ratePerSec =
       anyW.ratePerSec ?? Number((rebuildsWindow / windowSec).toFixed(2));
+    const computedShare =
+      totalRebuildsWindowHint > 0
+        ? Number(((rebuildsWindow / totalRebuildsWindowHint) * 100).toFixed(1))
+        : 0;
+    // Prefer a positive computed share when the wire value is missing/zero.
+    const share =
+      anyW.share != null && anyW.share > 0 ? anyW.share : computedShare;
     return {
       id,
       name,
@@ -36,17 +48,18 @@ export function normalizeHotWidgetsMessage(
       rebuildsSession,
       rebuildsWindow,
       ratePerSec,
-      share: anyW.share ?? 0,
+      share,
       lastSeenMs: anyW.lastSeenMs ?? 0,
       isFramework: anyW.isFramework,
       duringJank: anyW.duringJank ?? duringJank,
+      sourceUri: anyW.sourceUri,
+      sourceLine: anyW.sourceLine,
+      cause: anyW.cause,
     };
   });
 
   const totalRebuildsWindow =
-    msg.totalRebuildsWindow ??
-    msg.totalRebuilds ??
-    widgets.reduce((a, w) => a + w.rebuildsWindow, 0);
+    totalRebuildsWindowHint || widgets.reduce((a, w) => a + w.rebuildsWindow, 0);
   const totalRebuildsSession =
     msg.totalRebuildsSession ??
     widgets.reduce((a, w) => a + w.rebuildsSession, 0);
@@ -81,6 +94,7 @@ export function normalizeHotWidgetsMessage(
     windowMs,
     totalRebuildsWindow,
     totalRebuildsSession,
+    currentRoute: msg.currentRoute,
     widgets,
     screens,
     problems: msg.problems,

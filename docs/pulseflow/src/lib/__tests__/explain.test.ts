@@ -22,6 +22,9 @@ describe("explainProblem", () => {
       problem({
         kind: "hot_rebuild",
         widget: "InvoiceCard",
+        route: "/invoices",
+        sourceUri: "package:app/invoice.dart",
+        sourceLine: 42,
         cause: "InvoiceListState",
         ratePerSec: 22,
         share: 40,
@@ -32,6 +35,8 @@ describe("explainProblem", () => {
     );
     expect(why).toContain("InvoiceListState");
     expect(why).toContain("InvoiceCard");
+    expect(why).toContain("/invoices");
+    expect(why).toContain("package:app/invoice.dart:42");
     expect(why).toContain("40.0%");
     expect(why).toContain("16.7 ms");
     expect(why).toMatch(/jank/i);

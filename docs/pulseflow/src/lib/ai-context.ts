@@ -69,13 +69,13 @@ export const SECTION_TITLES: Record<AiSection, string> = {
 };
 
 const SECTION_HINTS: Record<AiSection, string> = {
-  problems: "the ranked problems and the session health verdict",
-  widgets: "widget rebuild pressure by widget and screen",
-  frames: "frame timing (build/raster) against the frame budget",
-  cpu: "CPU hotspots by self-time",
+  problems: "the ranked problems, session health verdict, and which widgets/routes drive them",
+  widgets: "widget rebuild pressure by widget name, route/screen, source location, and rebuild root",
+  frames: "frame timing (build/raster) against the frame budget, tied to hot widgets when present",
+  cpu: "CPU hotspots by self-time, tied to UI rebuild cost when widget data is present",
   memory: "heap growth, leaks, and image-cache waste",
   network: "slow HTTP requests on the critical path",
-  report: "the whole session across performance, CPU, memory, and network",
+  report: "the whole session across performance, widgets, CPU, memory, and network",
 };
 
 const MAX = {
@@ -89,13 +89,16 @@ const MAX = {
 } as const;
 
 export const QUICK_PROMPTS = {
-  explain: "Explain the problems in this view in simple language.",
-  topFixes: "Give me the top 3 fixes ranked by impact, with concrete steps.",
-  regression: "Is anything here getting worse or a regression? What should I watch?",
+  explain:
+    "Write a complete professional review: summary, findings with widget + route, ranked fixes, and how to verify.",
+  topFixes:
+    "Give the top 3 fixes by impact. Name each widget and its route/screen, with concrete Flutter steps.",
+  regression:
+    "Is anything regressing? Name the widgets/routes to watch and what metric should improve after a fix.",
 } as const;
 
 const DEFAULT_QUESTION =
-  "Explain what is wrong in this view and what I should fix first. Be concrete and prioritized.";
+  "Write a complete professional performance review of this view. Name every problematic widget with its route/screen, rank fixes by impact, and end with what to re-measure. Do not stop mid-answer.";
 
 export function sectionFromPath(pathname: string): AiSection {
   const clean = pathname.replace(/\/+$/, "");
@@ -135,17 +138,27 @@ function problemsBlock(problems: PerformanceProblem[]): string {
   const lines = ["## Problems (ranked by impact)"];
   problems.slice(0, MAX.problems).forEach((p, i) => {
     const impact = p.impact != null ? ` (impact ${p.impact})` : "";
-    lines.push(`${i + 1}. **[${p.severity.toUpperCase()}] ${p.title}**${impact}`);
+    const widgetAt =
+      p.widget && p.route
+        ? ` — \`${p.widget}\` on ${p.route}`
+        : p.widget
+          ? ` — \`${p.widget}\``
+          : p.route
+            ? ` — route ${p.route}`
+            : "";
+    lines.push(`${i + 1}. **[${p.severity.toUpperCase()}] ${p.title}**${widgetAt}${impact}`);
     if (p.why) lines.push(`   - Why: ${p.why}`);
     lines.push(`   - Fix: ${p.action}`);
     const where = [
-      p.route,
-      p.widget,
       p.sourceUri ? `${p.sourceUri}${p.sourceLine ? `:${p.sourceLine}` : ""}` : "",
+      p.cause ? `cause: ${p.cause}` : "",
+      p.ratePerSec != null ? `${p.ratePerSec.toFixed(1)}/s` : "",
+      p.share != null ? `${p.share.toFixed(1)}% share` : "",
+      p.duringJank ? "during jank" : "",
     ]
       .filter(Boolean)
       .join(" · ");
-    if (where) lines.push(`   - Where: ${where}`);
+    if (where) lines.push(`   - Evidence: ${where}`);
   });
   return lines.join("\n");
 }
@@ -160,25 +173,55 @@ function errorsBlock(errors?: ErrorEntry[]): string {
   ].join("\n");
 }
 
+function formatWidgetLine(w: {
+  name: string;
+  route: string;
+  ratePerSec: number;
+  share: number;
+  keyLabel?: string;
+  sourceUri?: string;
+  sourceLine?: number;
+  cause?: string;
+  duringJank?: boolean;
+  isFramework?: boolean;
+}): string {
+  const parts = [
+    `\`${w.name}\` on ${w.route}`,
+    `${w.ratePerSec.toFixed(1)}/s`,
+    `${w.share.toFixed(1)}% share`,
+  ];
+  if (w.keyLabel) parts.push(`key ${w.keyLabel}`);
+  if (w.sourceUri) parts.push(`${w.sourceUri}${w.sourceLine ? `:${w.sourceLine}` : ""}`);
+  if (w.cause) parts.push(`cause ${w.cause}`);
+  if (w.duringJank) parts.push("during jank");
+  if (w.isFramework) parts.push("framework");
+  return `- ${parts.join(" · ")}`;
+}
+
 function widgetsBlock(hot?: HotWidgetsPayload | null): string {
   const widgets = hot?.widgets ?? [];
   if (!widgets.length) return "## Widget rebuilds\n_no widget data (probe may be missing)_";
   const lines = [
     `## Widget rebuilds (window ${((hot?.windowMs ?? 10000) / 1000).toFixed(0)}s)`,
-    ...widgets
-      .slice(0, MAX.widgets)
-      .map(
-        (w) =>
-          `- \`${w.name}\` on ${w.route} — ${w.ratePerSec.toFixed(1)}/s (${w.share.toFixed(1)}% share)${
-            w.duringJank ? " [during jank]" : ""
-          }`,
-      ),
+    "_Always cite widgets as `WidgetName` on `/route` (include file:line when shown)._",
   ];
+  if (hot?.currentRoute) {
+    lines.push(`- Current route/screen: **${hot.currentRoute}**`);
+  }
+  lines.push(...widgets.slice(0, MAX.widgets).map(formatWidgetLine));
   const screens = hot?.screens ?? [];
   if (screens.length) {
-    lines.push("", "### By screen");
+    lines.push("", "### By screen / route");
     for (const s of screens.slice(0, 8)) {
-      lines.push(`- ${s.route} — ${s.ratePerSec.toFixed(1)}/s (${s.share.toFixed(1)}%)`);
+      const tops = (s.topWidgets ?? [])
+        .slice(0, 3)
+        .map((w) => `\`${w.name}\``)
+        .join(", ");
+      lines.push(
+        `- ${s.route} — ${s.ratePerSec.toFixed(1)}/s (${s.share.toFixed(1)}%)${
+          tops ? ` · top: ${tops}` : ""
+        }`,
+      );
     }
   }
   return lines.join("\n");
@@ -302,20 +345,29 @@ export function buildSectionContext(section: AiSection, state: AiContextState): 
       blocks.push(reportBlock(state));
       break;
   }
+  // Cross-cutting widget/route evidence so every section can name concrete UI locations.
+  if (section !== "widgets" && section !== "report" && (state.hot?.widgets?.length ?? 0) > 0) {
+    blocks.push(widgetsBlock(state.hot));
+  }
   return blocks.join("\n\n");
 }
 
 export function systemPrompt(section: AiSection, language: AiLanguage): string {
   const lang =
     language === "en"
-      ? "Reply in English, in simple language."
-      : "پاسخ را به فارسی و با زبان ساده بنویس.";
+      ? "Write the entire answer in clear, professional English."
+      : "کل پاسخ را به فارسیِ حرفه‌ای، دقیق و کامل بنویس.";
   return [
     "You are a senior Flutter performance engineer reviewing a live PulseFlow session.",
-    "Use ONLY the data provided; if something is missing, say so instead of guessing.",
-    "First explain the problems in plain, everyday language (avoid jargon when a simpler phrase works).",
-    "Then give the fixes ranked by impact, naming concrete widgets, state, and APIs.",
-    "Finally, say what to re-measure to confirm the fix.",
+    "Use ONLY the measurements below; never invent widgets, routes, file paths, or numbers. If data is missing, say so.",
+    "Always finish a complete answer — never stop mid-sentence, mid-list, or mid-heading.",
+    "When citing UI issues, name them as `WidgetName` on `/route` and include `file:line` when present. Prefer app widgets over framework widgets unless the framework widget is the rebuild root.",
+    "Structure every answer with these Markdown headings, in order:",
+    "1. ## Summary — 2–4 sentences on session health and the main risk",
+    "2. ## Findings — bullets with widget + route + measured evidence (rate, share, jank, source)",
+    "3. ## Fixes — ranked by impact, with concrete Flutter changes (const, keys, selectors, caching, etc.)",
+    "4. ## Verify — what to re-measure in PulseFlow after the fix",
+    "Close with one clear next step. Keep tone professional and actionable; avoid fluff.",
     `Focus on ${SECTION_HINTS[section]}.`,
     lang,
   ].join(" ");

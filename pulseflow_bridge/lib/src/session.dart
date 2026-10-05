@@ -908,6 +908,7 @@ class BridgeSession {
         'totalRebuildsWindow': totalWindow,
         'totalRebuildsSession': totalSession,
         'totalRebuilds': totalWindow,
+        if (data['currentRoute'] != null) 'currentRoute': '${data['currentRoute']}',
         'widgets': widgets,
         'screens': screens,
         'frozen': (data['frozen'] == true) || _hotWidgetsFrozen,

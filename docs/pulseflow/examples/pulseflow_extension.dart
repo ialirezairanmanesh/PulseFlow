@@ -158,6 +158,8 @@ class _WidgetProbe {
     frozen = value;
   }
 
+  String? currentRoute;
+
   String? _keyLabel(Key? key) {
     if (key == null) return null;
     if (key is ValueKey) return 'ValueKey(${key.value})';
@@ -167,21 +169,83 @@ class _WidgetProbe {
     return key.toString();
   }
 
+  bool _usefulScreenName(String name) {
+    if (name.isEmpty || name.startsWith('_')) return false;
+    const skip = {
+      'MaterialApp',
+      'CupertinoApp',
+      'WidgetsApp',
+      'Navigator',
+      'Overlay',
+      'Scaffold',
+      'Material',
+      'AnimatedBuilder',
+      'ListenableBuilder',
+      'ValueListenableBuilder',
+      'StreamBuilder',
+      'FutureBuilder',
+      'Builder',
+    };
+    if (skip.contains(name)) return false;
+    return RegExp(r'(Page|Screen|View|Route|Tab|Dashboard|Home|Sheet|Dialog)$')
+        .hasMatch(name);
+  }
+
+  /// Specific named route → Router URI → nearest *Page/*Screen → `/` → (unnamed).
+  String _routeOf(Element element) {
+    String? named;
+    try {
+      final modal = ModalRoute.of(element);
+      named = modal?.settings.name;
+      if (named == null || named.isEmpty) {
+        final settings = modal?.settings;
+        if (settings is Page) {
+          named = settings.name;
+          if (named == null || named.isEmpty) {
+            final pageType = settings.runtimeType.toString();
+            if (_usefulScreenName(pageType)) named = pageType;
+          }
+        }
+      }
+    } catch (_) {}
+
+    String? fromRouter;
+    try {
+      final provider = Router.maybeOf(element)?.routeInformationProvider;
+      if (provider != null) {
+        final path = provider.value.uri.path;
+        fromRouter = path.isEmpty ? '/' : path;
+      }
+    } catch (_) {}
+
+    String? screen;
+    try {
+      element.visitAncestorElements((ancestor) {
+        final name = ancestor.widget.runtimeType.toString();
+        if (_usefulScreenName(name)) {
+          screen = name;
+          return false;
+        }
+        return true;
+      });
+    } catch (_) {}
+
+    // Bare "/" is MaterialApp's home — prefer a concrete Page/Screen name.
+    if (named != null && named.isNotEmpty && named != '/') return named;
+    if (fromRouter != null && fromRouter != '/') return fromRouter;
+    if (screen != null) return screen!;
+    if (named != null && named.isNotEmpty) return named;
+    if (fromRouter != null) return fromRouter;
+    return '(unnamed)';
+  }
+
   void _record(Element element) {
     final name = element.widget.runtimeType.toString();
     final keyLabel = _keyLabel(element.widget.key);
-    String route = '(unnamed)';
-    try {
-      final modal = ModalRoute.of(element);
-      final nameSetting = modal?.settings.name;
-      if (nameSetting != null && nameSetting.isNotEmpty) {
-        route = nameSetting;
-      }
-    } catch (_) {
-      /* element may not be mounted in a route */
-    }
+    final route = _routeOf(element);
     final id = '$route|$name|${keyLabel ?? ''}';
     final now = DateTime.now();
+    currentRoute = route;
     final entry = entries.putIfAbsent(
       id,
       () => _WidgetEntry(id: id, name: name, route: route, keyLabel: keyLabel),
@@ -281,6 +345,7 @@ class _WidgetProbe {
       'totalRebuildsSession': totalSession,
       // Back-compat for older bridge builds
       'totalRebuilds': totalWindow,
+      'currentRoute': currentRoute,
       'widgets': top,
       'screens': screens,
     };

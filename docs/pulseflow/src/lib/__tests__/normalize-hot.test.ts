@@ -38,4 +38,30 @@ describe("normalizeHotWidgetsMessage", () => {
     expect(out.screens[0].route).toBe("/a");
     expect(out.screens[0].rebuildsWindow).toBe(15);
   });
+
+  it("keeps source locations and recomputes a missing share", () => {
+    const msg = {
+      type: "hotWidgets",
+      available: true,
+      windowMs: 10000,
+      totalRebuildsWindow: 20,
+      currentRoute: "/invoices",
+      widgets: [
+        {
+          name: "InvoiceCard",
+          route: "/invoices",
+          rebuildsWindow: 10,
+          share: 0,
+          sourceUri: "package:app/invoice.dart",
+          sourceLine: 42,
+        },
+      ],
+    } as unknown as BridgeHotWidgetsMessage;
+
+    const out = normalizeHotWidgetsMessage(msg);
+    expect(out.currentRoute).toBe("/invoices");
+    expect(out.widgets[0].share).toBe(50);
+    expect(out.widgets[0].sourceUri).toBe("package:app/invoice.dart");
+    expect(out.widgets[0].sourceLine).toBe(42);
+  });
 });

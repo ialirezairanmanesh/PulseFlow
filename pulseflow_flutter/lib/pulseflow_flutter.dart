@@ -21,6 +21,7 @@ export 'src/probes/leak_probe.dart';
 export 'src/probes/network_probe.dart';
 export 'src/probes/rebuild_cause.dart';
 export 'src/probes/rebuild_probe.dart';
+export 'src/probes/route_label.dart';
 export 'src/probes/widget_source.dart';
 export 'src/pulseflow_registration.dart';
 export 'src/scenarios/builtin_scenarios.dart';

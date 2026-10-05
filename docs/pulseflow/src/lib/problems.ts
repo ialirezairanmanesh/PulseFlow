@@ -47,7 +47,10 @@ function hotRebuildProblem(
   const severity: PerformanceProblem["severity"] =
     w.ratePerSec >= 15 || w.share >= 35 ? "high" : w.ratePerSec >= 8 || w.share >= 20 ? "medium" : "low";
   if (severity === "low") return null;
-  const routeLabel = w.route && w.route !== "(unnamed)" ? ` on ${w.route}` : "";
+  const routeLabel =
+    w.route && w.route !== "(unnamed)"
+      ? ` on ${w.route}`
+      : " on an unnamed route";
   const sourceLabel = w.sourceUri
     ? ` — ${w.sourceUri}${w.sourceLine ? `:${w.sourceLine}` : ""}`
     : "";

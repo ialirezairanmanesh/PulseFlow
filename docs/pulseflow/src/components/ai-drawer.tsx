@@ -252,8 +252,8 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
               {turns.length === 0 && (
                 <div className="space-y-3 text-sm text-[var(--ink-muted)]">
                   <p>
-                    Ask about the current “{SECTION_TITLES[section]}” data. The model only sees what is
-                    shown here.
+                    Ask about “{SECTION_TITLES[section]}”. The model gets this view’s data plus widget
+                    and route evidence when available.
                   </p>
                   <div className="flex flex-col gap-2">
                     <Button size="sm" onClick={() => void send()}>

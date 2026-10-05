@@ -176,6 +176,7 @@ interface HotWidgetsPayload {
   totalRebuildsWindow: number;
   totalRebuildsSession: number;
   totalRebuilds?: number;
+  currentRoute?: string;
   widgets: WidgetRebuildStat[];
   screens: ScreenRebuildStat[];
   frozen?: boolean;
@@ -829,6 +830,8 @@ async function pollHotWidgets(session: Session) {
       totalRebuildsWindow: totalWindow,
       totalRebuildsSession: totalSession,
       totalRebuilds: totalWindow,
+      currentRoute:
+        data.currentRoute != null ? String(data.currentRoute) : undefined,
       widgets,
       screens,
       frozen: Boolean(data.frozen) || session.hotWidgetsFrozen,
