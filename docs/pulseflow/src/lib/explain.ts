@@ -37,12 +37,13 @@ export function explainProblem(p: PerformanceProblem, ctx: ExplainContext): stri
         p.sourceUri != null
           ? ` (${p.sourceUri}${p.sourceLine != null ? `:${p.sourceLine}` : ""})`
           : "";
+      // relatedBuildMs on rebuilds is rare and must not imply per-widget additive cost.
       const cost = p.relatedBuildMs
-        ? ` That build costs about ${ms(p.relatedBuildMs)} per frame against a ${budget} ms budget`
+        ? ` Coincides with ~${ms(p.relatedBuildMs)} build on recent frames (session-wide, not this widget alone) vs a ${budget} ms budget`
         : "";
       const consequence = p.duringJank
         ? ", and it lands on janky frames — that is why you see dropped frames while interacting."
-        : ", so frames get close to the budget.";
+        : " — a rebuild hotspot; confirm whether it coincides with jank before prioritizing.";
       return `${cause}${where}${source} rebuilds ${fmt(p.ratePerSec)}×/s — ${fmt(
         p.share,
       )}% of all rebuilds.${cost}${consequence}`;
@@ -68,10 +69,11 @@ export function explainProblem(p: PerformanceProblem, ctx: ExplainContext): stri
       return `${p.detail} A class that only grows usually means a cache, listener, or list that is never released.`;
 
     case "slow_http": {
-      const ratio = p.ratePerSec ? p.ratePerSec / 500 : 0;
-      return `${p.title} — ${ms(p.ratePerSec, 0)}${
+      const latency = p.latencyMs ?? 0;
+      const ratio = latency > 0 ? latency / 500 : 0;
+      return `${p.title} — ${ms(latency, 0)}${
         ratio >= 1 ? `, about ${ratio.toFixed(1)}× the 500 ms healthy ceiling` : ""
-      }. It blocks whatever waits on the response.`;
+      }. This is network/UX wait time; it does not by itself mean high build ms unless rebuilds fire when the response lands.`;
     }
 
     case "scenario_jank":

@@ -1,5 +1,6 @@
 import { isAppCpuFrame, tipForCpuHotspot } from "@/lib/cpu-profile";
 import { FRAME_BUDGET } from "@/lib/chart-utils";
+import { isFrameworkWidget, isFrameworkWidgetName } from "@/lib/framework-widget";
 import { attachImpact, type ImpactContext } from "@/lib/impact";
 import { explainProblem } from "@/lib/explain";
 import type {
@@ -37,12 +38,33 @@ export function tipForWidget(
   return `Isolate rebuilds with const, keys, or a smaller StatefulWidget.${jankNote}`;
 }
 
+/**
+ * Promote framework leaves to their app rebuild root when known, so Problems
+ * names InvoiceTable instead of _FocusInheritedScope.
+ */
+function rebuildTarget(
+  w: WidgetRebuildStat,
+  cause?: string,
+): { name: string; cause?: string; leaf?: string } | null {
+  const leafFramework = isFrameworkWidget(w);
+  const causeApp = cause && !isFrameworkWidgetName(cause) ? cause : undefined;
+
+  if (leafFramework) {
+    if (!causeApp) return null;
+    return { name: causeApp, leaf: w.name };
+  }
+
+  const extraCause =
+    causeApp && causeApp !== w.name ? causeApp : w.cause && !isFrameworkWidgetName(w.cause) ? w.cause : undefined;
+  return { name: w.name, cause: extraCause };
+}
+
 function hotRebuildProblem(
   w: WidgetRebuildStat,
-  buildMs?: number,
   cause?: string,
 ): PerformanceProblem | null {
-  if (w.isFramework) return null;
+  const target = rebuildTarget(w, cause);
+  if (!target) return null;
   if (w.ratePerSec < 8 && w.share < 20) return null;
   const severity: PerformanceProblem["severity"] =
     w.ratePerSec >= 15 || w.share >= 35 ? "high" : w.ratePerSec >= 8 || w.share >= 20 ? "medium" : "low";
@@ -54,22 +76,24 @@ function hotRebuildProblem(
   const sourceLabel = w.sourceUri
     ? ` — ${w.sourceUri}${w.sourceLine ? `:${w.sourceLine}` : ""}`
     : "";
-  const causeLabel = cause && cause !== w.name ? ` — triggered by ${cause}` : "";
+  const viaLeaf = target.leaf ? ` — via ${target.leaf}` : "";
+  const causeLabel =
+    target.cause && target.cause !== target.name ? ` — triggered by ${target.cause}` : "";
   return {
-    id: `hot_rebuild:${w.id}`,
+    id: `hot_rebuild:${w.route}|${target.name}`,
     severity,
     kind: "hot_rebuild",
-    title: `${w.name} rebuilds heavily${routeLabel}`,
-    detail: `${w.ratePerSec.toFixed(1)}/s in the last window (${w.share.toFixed(1)}% of rebuilds)${sourceLabel}${causeLabel}`,
-    action: tipForWidget(w.name, w.share, { ratePerSec: w.ratePerSec, duringJank: w.duringJank }),
+    title: `${target.name} rebuilds heavily${routeLabel}`,
+    detail: `${w.ratePerSec.toFixed(1)}/s in the last window (${w.share.toFixed(1)}% of rebuilds)${sourceLabel}${viaLeaf}${causeLabel}`,
+    action: tipForWidget(target.name, w.share, { ratePerSec: w.ratePerSec, duringJank: w.duringJank }),
     route: w.route,
-    widget: w.name,
+    widget: target.name,
     ratePerSec: w.ratePerSec,
     share: w.share,
-    relatedBuildMs: buildMs,
+    // Do NOT attach session buildMs — that cost is shared across the frame, not per widget.
     sourceUri: w.sourceUri,
     sourceLine: w.sourceLine,
-    cause: cause && cause !== w.name ? cause : undefined,
+    cause: target.cause,
     duringJank: w.duringJank,
   };
 }
@@ -168,10 +192,21 @@ export function buildProblems(input: {
     const causeByWidget = new Map(
       (rebuildCauses?.attributed ?? []).map((a) => [a.widget, a.root]),
     );
+    const rebuildsById = new Map<string, PerformanceProblem>();
     for (const w of hot.widgets) {
-      const p = hotRebuildProblem(w, buildMs, causeByWidget.get(w.name));
-      if (p) problems.push(p);
+      const p = hotRebuildProblem(w, causeByWidget.get(w.name) ?? w.cause);
+      if (!p) continue;
+      const prev = rebuildsById.get(p.id);
+      // Keep the strongest evidence when several framework leaves promote to the same root.
+      if (
+        !prev ||
+        (p.ratePerSec ?? 0) > (prev.ratePerSec ?? 0) ||
+        (p.share ?? 0) > (prev.share ?? 0)
+      ) {
+        rebuildsById.set(p.id, p);
+      }
     }
+    problems.push(...rebuildsById.values());
   }
 
   if (cpuProfile?.topFunctions?.length) {
@@ -236,8 +271,9 @@ export function buildProblems(input: {
       kind: "slow_http",
       title: `Slow HTTP ${r.method} ${r.uri}`,
       detail: `${r.latencyMs.toFixed(0)} ms · status ${r.status ?? "—"}`,
-      action: "Cache responses, paginate payloads, or move work off the critical path.",
-      ratePerSec: r.latencyMs,
+      action:
+        "Treat as network/UX cost: cache or paginate if the UI waits on this response; do not assume it alone causes high build ms.",
+      latencyMs: r.latencyMs,
     });
   }
 

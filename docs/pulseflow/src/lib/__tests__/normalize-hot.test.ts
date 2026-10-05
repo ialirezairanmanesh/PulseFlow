@@ -64,4 +64,16 @@ describe("normalizeHotWidgetsMessage", () => {
     expect(out.widgets[0].sourceUri).toBe("package:app/invoice.dart");
     expect(out.widgets[0].sourceLine).toBe(42);
   });
+
+  it("marks private Flutter shells as framework even without the wire flag", () => {
+    const msg = {
+      type: "hotWidgets",
+      available: true,
+      windowMs: 10000,
+      widgets: [{ name: "_FocusInheritedScope", route: "/a", rebuildsWindow: 10 }],
+    } as unknown as BridgeHotWidgetsMessage;
+
+    const out = normalizeHotWidgetsMessage(msg);
+    expect(out.widgets[0].isFramework).toBe(true);
+  });
 });

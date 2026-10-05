@@ -78,7 +78,7 @@ describe("buildProblems", () => {
     }
   });
 
-  it("includes slow HTTP with method, uri, and severity", () => {
+  it("includes slow HTTP with latencyMs, not ratePerSec", () => {
     const problems = buildProblems({
       hot: null,
       hotAvailable: true,
@@ -88,7 +88,62 @@ describe("buildProblems", () => {
     const http = problems.find((p) => p.kind === "slow_http");
     expect(http?.title).toContain("/api/slow");
     expect(http?.severity).toBe("high");
+    expect(http?.latencyMs).toBe(2000);
+    expect(http?.ratePerSec).toBeUndefined();
+    expect(http?.why).toMatch(/2000 ms/);
+    expect(http?.why).not.toMatch(/\d+(?:\.\d+)?\/s/);
     expect(problems.some((p) => p.id.includes("/api/ok"))).toBe(false);
+  });
+
+  it("does not attach session buildMs to every rebuild problem", () => {
+    const problems = buildProblems({
+      hot: hotPayload([widget({ name: "InvoiceCard", ratePerSec: 22, share: 40 })]),
+      hotAvailable: true,
+      latest: point({ buildMs: 18 }),
+      gcEvents: [],
+    });
+    const hot = problems.find((p) => p.kind === "hot_rebuild");
+    expect(hot?.relatedBuildMs).toBeUndefined();
+    const build = problems.find((p) => p.kind === "high_build");
+    expect(build?.relatedBuildMs).toBe(18);
+  });
+
+  it("skips private framework shells and promotes to the app rebuild root", () => {
+    const problems = buildProblems({
+      hot: hotPayload([
+        widget({
+          name: "_FocusInheritedScope",
+          route: "/invoices",
+          ratePerSec: 90,
+          share: 40,
+          cause: "InvoiceTable",
+        }),
+        widget({
+          name: "DefaultSelectionStyle",
+          route: "/invoices",
+          ratePerSec: 50,
+          share: 20,
+          cause: "InvoiceTable",
+        }),
+      ]),
+      hotAvailable: true,
+      gcEvents: [],
+    });
+    const rebuilds = problems.filter((p) => p.kind === "hot_rebuild");
+    expect(rebuilds).toHaveLength(1);
+    expect(rebuilds[0]?.widget).toBe("InvoiceTable");
+    expect(rebuilds[0]?.detail).toMatch(/via/);
+  });
+
+  it("drops framework shells with no app cause", () => {
+    const problems = buildProblems({
+      hot: hotPayload([
+        widget({ name: "_InkResponseStateWidget", ratePerSec: 80, share: 50 }),
+      ]),
+      hotAvailable: true,
+      gcEvents: [],
+    });
+    expect(problems.some((p) => p.kind === "hot_rebuild")).toBe(false);
   });
 
   it("attaches widget source locations", () => {

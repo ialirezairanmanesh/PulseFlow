@@ -34,6 +34,7 @@ const Set<String> _frameworkWidgets = <String>{
   'MediaQuery',
   'Directionality',
   'DefaultTextStyle',
+  'DefaultSelectionStyle',
   'IconTheme',
   'Theme',
   'Material',
@@ -42,6 +43,7 @@ const Set<String> _frameworkWidgets = <String>{
   'MouseRegion',
   'Focus',
   'FocusScope',
+  'FocusTraversalGroup',
   'Overlay',
   'OverlayEntry',
   'TickerMode',
@@ -68,8 +70,10 @@ const Set<String> _frameworkWidgets = <String>{
   'Flow',
   'CustomMultiChildLayout',
   'SingleChildScrollView',
+  'CustomScrollView',
   'NotificationListener',
   'ScrollConfiguration',
+  'Scrollable',
   'RawGestureDetector',
   'Actions',
   'Shortcuts',
@@ -77,7 +81,21 @@ const Set<String> _frameworkWidgets = <String>{
   'Title',
   'Banner',
   'CheckedModeBanner',
+  'InkWell',
+  'InkResponse',
+  'SelectionArea',
+  'SelectableRegion',
+  'AnimatedBuilder',
+  'AnimatedContainer',
+  'ListenableBuilder',
+  'ValueListenableBuilder',
 };
+
+/// True for Flutter/Material shells and private Element wrappers (`_Foo`).
+bool isFrameworkWidgetName(String name) {
+  if (name.startsWith('_')) return true;
+  return _frameworkWidgets.contains(name);
+}
 
 class WidgetEntry {
   WidgetEntry({
@@ -216,7 +234,7 @@ class RebuildProbe {
     if (entry == null) {
       String? sourceFile;
       int? sourceLine;
-      if (resolveSource && !_frameworkWidgets.contains(name)) {
+      if (resolveSource && !isFrameworkWidgetName(name)) {
         final SourceLocation? location = resolveElementSource(element);
         if (location != null && _isAppSource(location.file)) {
           sourceFile = location.file;
@@ -423,7 +441,7 @@ class RebuildProbe {
             ? double.parse((windowCount / windowSec).toStringAsFixed(2))
             : 0.0,
         'lastSeenMs': lastSeenMs < 0 ? 0 : lastSeenMs,
-        'isFramework': _frameworkWidgets.contains(entry.name),
+        'isFramework': isFrameworkWidgetName(entry.name),
       });
     }
 

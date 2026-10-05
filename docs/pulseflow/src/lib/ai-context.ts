@@ -6,6 +6,7 @@
  * `computeVerdict`, and `buildAgentReportMarkdown` instead of re-deriving anything.
  */
 import { buildAgentReportMarkdown } from "@/lib/agent-report";
+import { isFrameworkWidget } from "@/lib/framework-widget";
 import { computeVerdict, type BudgetResult } from "@/lib/verdict";
 import { formatBytes } from "@/lib/utils";
 import type { AiLanguage } from "@/lib/ai-providers";
@@ -69,12 +70,12 @@ export const SECTION_TITLES: Record<AiSection, string> = {
 };
 
 const SECTION_HINTS: Record<AiSection, string> = {
-  problems: "the ranked problems, session health verdict, and which widgets/routes drive them",
+  problems: "the ranked problems, session health verdict, and which app widgets/routes drive them",
   widgets: "widget rebuild pressure by widget name, route/screen, source location, and rebuild root",
   frames: "frame timing (build/raster) against the frame budget, tied to hot widgets when present",
   cpu: "CPU hotspots by self-time, tied to UI rebuild cost when widget data is present",
   memory: "heap growth, leaks, and image-cache waste",
-  network: "slow HTTP requests on the critical path",
+  network: "slow HTTP requests (latency / UX wait — separate from frame build cost)",
   report: "the whole session across performance, widgets, CPU, memory, and network",
 };
 
@@ -90,15 +91,15 @@ const MAX = {
 
 export const QUICK_PROMPTS = {
   explain:
-    "Write a complete professional review: summary, findings with widget + route, ranked fixes, and how to verify.",
+    "Write a concise review: short summary, up to 5 findings with app widget + route, up to 3 ranked fixes, and what to re-measure. Separate frame-budget issues from network latency.",
   topFixes:
-    "Give the top 3 fixes by impact. Name each widget and its route/screen, with concrete Flutter steps.",
+    "Give the top 3 fixes by impact. Name each app widget and its route/screen, with concrete Flutter steps. Do not invent libraries.",
   regression:
     "Is anything regressing? Name the widgets/routes to watch and what metric should improve after a fix.",
 } as const;
 
 const DEFAULT_QUESTION =
-  "Write a complete professional performance review of this view. Name every problematic widget with its route/screen, rank fixes by impact, and end with what to re-measure. Do not stop mid-answer.";
+  "Write a concise, accurate performance review. Prefer app widgets over framework noise. Cap Findings at 5 and Fixes at 3. Separate frame-budget issues from network latency. Do not invent numbers, libraries, or file paths.";
 
 export function sectionFromPath(pathname: string): AiSection {
   const clean = pathname.replace(/\/+$/, "");
@@ -133,11 +134,33 @@ function sessionBlock(state: AiContextState): string {
   ].join("\n");
 }
 
+function trackOf(kind: PerformanceProblem["kind"]): "frame" | "network" | "memory" | "other" {
+  switch (kind) {
+    case "slow_http":
+      return "network";
+    case "memory_growth":
+    case "gc_pressure":
+      return "memory";
+    case "hot_rebuild":
+    case "high_build":
+    case "high_raster":
+    case "cpu_hotspot":
+    case "scenario_jank":
+      return "frame";
+    default:
+      return "other";
+  }
+}
+
 function problemsBlock(problems: PerformanceProblem[]): string {
   if (!problems.length) return "## Problems (ranked)\n_none detected in this session_";
-  const lines = ["## Problems (ranked by impact)"];
+  const lines = [
+    "## Problems (ranked by impact)",
+    "_Tracks: **frame** = build/raster/jank/rebuilds; **network** = HTTP latency (UX wait, not frame cost by itself)._",
+  ];
   problems.slice(0, MAX.problems).forEach((p, i) => {
     const impact = p.impact != null ? ` (impact ${p.impact})` : "";
+    const track = trackOf(p.kind);
     const widgetAt =
       p.widget && p.route
         ? ` — \`${p.widget}\` on ${p.route}`
@@ -146,14 +169,18 @@ function problemsBlock(problems: PerformanceProblem[]): string {
           : p.route
             ? ` — route ${p.route}`
             : "";
-    lines.push(`${i + 1}. **[${p.severity.toUpperCase()}] ${p.title}**${widgetAt}${impact}`);
+    lines.push(
+      `${i + 1}. **[${p.severity.toUpperCase()}/${track}] ${p.title}**${widgetAt}${impact}`,
+    );
     if (p.why) lines.push(`   - Why: ${p.why}`);
     lines.push(`   - Fix: ${p.action}`);
     const where = [
       p.sourceUri ? `${p.sourceUri}${p.sourceLine ? `:${p.sourceLine}` : ""}` : "",
       p.cause ? `cause: ${p.cause}` : "",
-      p.ratePerSec != null ? `${p.ratePerSec.toFixed(1)}/s` : "",
+      p.latencyMs != null ? `${p.latencyMs.toFixed(0)} ms latency` : "",
+      p.kind !== "slow_http" && p.ratePerSec != null ? `${p.ratePerSec.toFixed(1)}/s` : "",
       p.share != null ? `${p.share.toFixed(1)}% share` : "",
+      p.relatedBuildMs != null ? `relatedBuild ${p.relatedBuildMs.toFixed(1)} ms` : "",
       p.duringJank ? "during jank" : "",
     ]
       .filter(Boolean)
@@ -194,16 +221,21 @@ function formatWidgetLine(w: {
   if (w.sourceUri) parts.push(`${w.sourceUri}${w.sourceLine ? `:${w.sourceLine}` : ""}`);
   if (w.cause) parts.push(`cause ${w.cause}`);
   if (w.duringJank) parts.push("during jank");
-  if (w.isFramework) parts.push("framework");
+  if (w.isFramework || isFrameworkWidget(w)) parts.push("framework — ignore unless rebuild root");
   return `- ${parts.join(" · ")}`;
 }
 
-function widgetsBlock(hot?: HotWidgetsPayload | null): string {
-  const widgets = hot?.widgets ?? [];
-  if (!widgets.length) return "## Widget rebuilds\n_no widget data (probe may be missing)_";
+function widgetsBlock(hot?: HotWidgetsPayload | null, opts?: { appOnly?: boolean }): string {
+  const raw = hot?.widgets ?? [];
+  const widgets = opts?.appOnly ? raw.filter((w) => !isFrameworkWidget(w)) : raw;
+  if (!widgets.length) {
+    return opts?.appOnly && raw.length
+      ? "## App widget rebuilds\n_only framework shells in this window; see rebuild causes on Problems_"
+      : "## Widget rebuilds\n_no widget data (probe may be missing)_";
+  }
   const lines = [
-    `## Widget rebuilds (window ${((hot?.windowMs ?? 10000) / 1000).toFixed(0)}s)`,
-    "_Always cite widgets as `WidgetName` on `/route` (include file:line when shown)._",
+    `## ${opts?.appOnly ? "App widget" : "Widget"} rebuilds (window ${((hot?.windowMs ?? 10000) / 1000).toFixed(0)}s)`,
+    "_Cite as `WidgetName` on `/route` (file:line when shown). Prefer app widgets; skip framework shells._",
   ];
   if (hot?.currentRoute) {
     lines.push(`- Current route/screen: **${hot.currentRoute}**`);
@@ -214,6 +246,7 @@ function widgetsBlock(hot?: HotWidgetsPayload | null): string {
     lines.push("", "### By screen / route");
     for (const s of screens.slice(0, 8)) {
       const tops = (s.topWidgets ?? [])
+        .filter((w) => !opts?.appOnly || !isFrameworkWidget(w))
         .slice(0, 3)
         .map((w) => `\`${w.name}\``)
         .join(", ");
@@ -235,7 +268,7 @@ function framesBlock(state: AiContextState): string {
     budgetMs: state.budgetMs,
   });
   const b = (key: string) => verdict.budgets.find((x) => x.key === key);
-  const lines = ["## Frames"];
+  const lines = ["## Frames (frame-budget track)"];
   const build = b("p95Build");
   const raster = b("p95Raster");
   const jank = b("jank");
@@ -295,11 +328,12 @@ function memoryBlock(state: AiContextState): string {
 
 function networkBlock(network?: NetworkRequest[]): string {
   const slow = [...(network ?? [])].sort((a, b) => b.latencyMs - a.latencyMs).slice(0, MAX.http);
-  if (!slow.length) return "## Network\n_no HTTP samples captured_";
+  if (!slow.length) return "## Network (latency track)\n_no HTTP samples captured_";
   return [
-    `## Network (${network?.length ?? 0} requests; slowest first)`,
+    `## Network (latency track — ${network?.length ?? 0} requests; slowest first)`,
+    "_Latency is UX wait time in ms. It is not an event rate and does not equal build ms._",
     ...slow.map(
-      (r) => `- \`${r.method} ${r.uri}\` — ${r.latencyMs.toFixed(0)} ms (status ${r.status ?? "—"})`,
+      (r) => `- \`${r.method} ${r.uri}\` — ${r.latencyMs.toFixed(0)} ms latency (status ${r.status ?? "—"})`,
     ),
   ].join("\n");
 }
@@ -324,7 +358,12 @@ export function buildSectionContext(section: AiSection, state: AiContextState): 
   const blocks: string[] = [sessionBlock(state)];
   switch (section) {
     case "problems":
-      blocks.push(problemsBlock(state.problems), errorsBlock(state.errors));
+      blocks.push(
+        problemsBlock(state.problems),
+        errorsBlock(state.errors),
+        framesBlock(state),
+        networkBlock(state.network),
+      );
       break;
     case "widgets":
       blocks.push(widgetsBlock(state.hot));
@@ -345,9 +384,9 @@ export function buildSectionContext(section: AiSection, state: AiContextState): 
       blocks.push(reportBlock(state));
       break;
   }
-  // Cross-cutting widget/route evidence so every section can name concrete UI locations.
+  // Cross-cutting app widget/route evidence (skip framework noise for the model).
   if (section !== "widgets" && section !== "report" && (state.hot?.widgets?.length ?? 0) > 0) {
-    blocks.push(widgetsBlock(state.hot));
+    blocks.push(widgetsBlock(state.hot, { appOnly: true }));
   }
   return blocks.join("\n\n");
 }
@@ -359,13 +398,20 @@ export function systemPrompt(section: AiSection, language: AiLanguage): string {
       : "کل پاسخ را به فارسیِ حرفه‌ای، دقیق و کامل بنویس.";
   return [
     "You are a senior Flutter performance engineer reviewing a live PulseFlow session.",
-    "Use ONLY the measurements below; never invent widgets, routes, file paths, or numbers. If data is missing, say so.",
+    "Use ONLY the measurements below; never invent widgets, routes, file paths, libraries, APIs, or numbers. If data is missing, say so.",
+    "Be concise and skeptical of exaggeration — prefer understatement over drama.",
     "Always finish a complete answer — never stop mid-sentence, mid-list, or mid-heading.",
-    "When citing UI issues, name them as `WidgetName` on `/route` and include `file:line` when present. Prefer app widgets over framework widgets unless the framework widget is the rebuild root.",
+    "Accuracy rules:",
+    "- Keep **frame-budget** issues (build/raster/jank/rebuilds/CPU) separate from **network** latency. Slow HTTP is UX wait; do not claim it causes high build ms unless rebuilds are tied to the response landing.",
+    "- Prefer app widgets over framework/private (`_…`) shells. Do not list Focus/Ink/Selection/Actions internals as separate HIGH findings when an app rebuild root is named.",
+    "- HTTP evidence is latency in ms only — never invent an event rate from latency.",
+    "- Do not multiply relatedBuild / session build cost across widgets; that cost is frame-wide when present.",
+    "- Cap ## Findings at 5 bullets and ## Fixes at 3. Rank by measured impact. Do not invent Hive/dio interceptors/etc. unless the brief already mentions them.",
+    "When citing UI issues, name them as `WidgetName` on `/route` and include `file:line` when present.",
     "Structure every answer with these Markdown headings, in order:",
-    "1. ## Summary — 2–4 sentences on session health and the main risk",
-    "2. ## Findings — bullets with widget + route + measured evidence (rate, share, jank, source)",
-    "3. ## Fixes — ranked by impact, with concrete Flutter changes (const, keys, selectors, caching, etc.)",
+    "1. ## Summary — 2–3 sentences on session health and the main risk (name the track: frame vs network)",
+    "2. ## Findings — up to 5 bullets with widget + route + measured evidence",
+    "3. ## Fixes — up to 3, ranked by impact, with concrete Flutter changes grounded in the data",
     "4. ## Verify — what to re-measure in PulseFlow after the fix",
     "Close with one clear next step. Keep tone professional and actionable; avoid fluff.",
     `Focus on ${SECTION_HINTS[section]}.`,

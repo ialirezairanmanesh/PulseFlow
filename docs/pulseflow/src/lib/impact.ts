@@ -27,7 +27,8 @@ function magnitude(p: PerformanceProblem, ctx: ImpactContext): number {
     case "cpu_hotspot":
       return clamp01((p.ratePerSec ?? 0) / 30);
     case "slow_http":
-      return clamp01((p.ratePerSec ?? 0) / 2000);
+      // latencyMs only — never treat ratePerSec as latency.
+      return clamp01(((p.latencyMs ?? 0) - 500) / 3500);
     case "error_overflow":
     case "error_exception":
       return clamp01((p.ratePerSec ?? 0) / 10);
@@ -57,8 +58,8 @@ function jankBoost(p: PerformanceProblem, ctx: ImpactContext): number {
 
 /**
  * A normalized 0–100 priority for a problem, so "fix first" is comparable across
- * kinds instead of relying on the overloaded `ratePerSec` field. Blends the
- * severity base with magnitude vs budget, jank correlation, and frame cost.
+ * kinds. Blends the severity base with magnitude vs budget, jank correlation,
+ * and frame cost (only when relatedBuildMs is set — typically high_build/raster).
  */
 export function computeImpact(p: PerformanceProblem, ctx: ImpactContext): number {
   const base = SEVERITY_BASE[p.severity] ?? 20;

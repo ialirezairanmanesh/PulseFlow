@@ -43,6 +43,19 @@ describe("computeImpact", () => {
     expect(impact).toBeGreaterThanOrEqual(0);
     expect(impact).toBeLessThanOrEqual(100);
   });
+
+  it("scores slow HTTP from latencyMs, not ratePerSec", () => {
+    const withLatency = computeImpact(
+      problem({ kind: "slow_http", severity: "high", latencyMs: 2000 }),
+      ctx,
+    );
+    const spoofedRate = computeImpact(
+      problem({ kind: "slow_http", severity: "high", ratePerSec: 4000 }),
+      ctx,
+    );
+    expect(withLatency).toBeGreaterThan(spoofedRate);
+    expect(withLatency).toBeGreaterThan(62);
+  });
 });
 
 describe("attachImpact", () => {

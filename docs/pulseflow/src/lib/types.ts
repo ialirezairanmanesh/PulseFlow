@@ -119,6 +119,8 @@ export interface PerformanceProblem {
   widget?: string;
   ratePerSec?: number;
   share?: number;
+  /** HTTP latency in ms (slow_http only). Do not overload ratePerSec for this. */
+  latencyMs?: number;
   relatedBuildMs?: number;
   sourceUri?: string;
   sourceLine?: number;

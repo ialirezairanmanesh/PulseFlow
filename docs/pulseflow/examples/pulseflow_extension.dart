@@ -59,6 +59,7 @@ const _frameworkWidgets = <String>{
   'MediaQuery',
   'Directionality',
   'DefaultTextStyle',
+  'DefaultSelectionStyle',
   'IconTheme',
   'Theme',
   'Material',
@@ -67,6 +68,7 @@ const _frameworkWidgets = <String>{
   'MouseRegion',
   'Focus',
   'FocusScope',
+  'FocusTraversalGroup',
   'Overlay',
   'OverlayEntry',
   'TickerMode',
@@ -93,8 +95,10 @@ const _frameworkWidgets = <String>{
   'Flow',
   'CustomMultiChildLayout',
   'SingleChildScrollView',
+  'CustomScrollView',
   'NotificationListener',
   'ScrollConfiguration',
+  'Scrollable',
   'RawGestureDetector',
   'Actions',
   'Shortcuts',
@@ -102,7 +106,20 @@ const _frameworkWidgets = <String>{
   'Title',
   'Banner',
   'CheckedModeBanner',
+  'InkWell',
+  'InkResponse',
+  'SelectionArea',
+  'SelectableRegion',
+  'AnimatedBuilder',
+  'AnimatedContainer',
+  'ListenableBuilder',
+  'ValueListenableBuilder',
 };
+
+bool _isFrameworkWidgetName(String name) {
+  if (name.startsWith('_')) return true;
+  return _frameworkWidgets.contains(name);
+}
 
 class _WidgetEntry {
   _WidgetEntry({
@@ -290,7 +307,7 @@ class _WidgetProbe {
         'ratePerSec':
             windowCount > 0 ? double.parse((windowCount / windowSec).toStringAsFixed(2)) : 0.0,
         'lastSeenMs': lastSeenMs < 0 ? 0 : lastSeenMs,
-        'isFramework': _frameworkWidgets.contains(entry.name),
+        'isFramework': _isFrameworkWidgetName(entry.name),
       });
     }
 

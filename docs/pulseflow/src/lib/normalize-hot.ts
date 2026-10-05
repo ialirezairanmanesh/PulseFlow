@@ -4,6 +4,7 @@ import type {
   ScreenRebuildStat,
   WidgetRebuildStat,
 } from "@/lib/types";
+import { isFrameworkWidgetName } from "@/lib/framework-widget";
 
 /** Normalize legacy or partial hotWidgets messages into HotWidgetsPayload. */
 export function normalizeHotWidgetsMessage(
@@ -50,7 +51,7 @@ export function normalizeHotWidgetsMessage(
       ratePerSec,
       share,
       lastSeenMs: anyW.lastSeenMs ?? 0,
-      isFramework: anyW.isFramework,
+      isFramework: Boolean(anyW.isFramework) || isFrameworkWidgetName(name),
       duringJank: anyW.duringJank ?? duringJank,
       sourceUri: anyW.sourceUri,
       sourceLine: anyW.sourceLine,

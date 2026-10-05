@@ -73,4 +73,18 @@ describe("explainProblem", () => {
     expect(why).toContain("AppState.build");
     expect(why).toContain("22.0%");
   });
+
+  it("explains slow HTTP from latencyMs without inventing an event rate", () => {
+    const why = explainProblem(
+      problem({
+        kind: "slow_http",
+        title: "Slow HTTP GET /api",
+        latencyMs: 2500,
+      }),
+      ctx,
+    );
+    expect(why).toContain("2500 ms");
+    expect(why).toMatch(/network\/UX/i);
+    expect(why).not.toMatch(/\d+\.\d+\/s/);
+  });
 });

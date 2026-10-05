@@ -37,6 +37,8 @@ describe("buildSectionContext", () => {
     const context = buildSectionContext("problems", state());
     expect(context).toContain("Session health");
     expect(context).toContain("InvoiceCard");
+    expect(context).toContain("frame-budget track");
+    expect(context).toContain("latency track");
     expect(context).not.toContain("NaN");
   });
 
@@ -101,8 +103,15 @@ describe("buildChatMessages", () => {
 
   it("uses a default instruction when no question is given", () => {
     const messages = buildChatMessages("network", "DATA");
-    expect(messages[1].content).toContain("complete professional");
+    expect(messages[1].content).toMatch(/concise|accurate/i);
     expect(messages[1].content).toContain("widget");
+  });
+
+  it("keeps the system prompt disciplined about causality and caps", () => {
+    const messages = buildChatMessages("problems", "DATA", undefined, "en");
+    expect(messages[0].content).toMatch(/frame-budget/i);
+    expect(messages[0].content).toMatch(/Findings at 5/i);
+    expect(messages[0].content).toMatch(/never invent/i);
   });
 
   it("keeps prior turns between the system prompt and the new question", () => {
