@@ -98,6 +98,9 @@ Hot-restart, reconnect PulseFlow. The bridge will:
 | RPC | Purpose |
 | --- | --- |
 | `ext.pulseflow.getFrameStats` | Accurate engine frame timings + refresh rate/budget |
+| `ext.pulseflow.getRebuildCauses` | Rebuild roots + attributed descendants |
+| `ext.pulseflow.getErrors` | Overflow / assertion / exception signatures |
+| `ext.pulseflow.getImageStats` | Image cache health + oversized decodes |
 | `ext.pulseflow.getNetworkLog` | Drain `HttpOverrides`-captured requests |
 | `ext.pulseflow.getLeakReport` | Outstanding (created-not-disposed) objects |
 | `ext.pulseflow.injectInvoices` | Stress: append invoices (`count`) |
@@ -175,3 +178,15 @@ After recording a CPU profile, **Export speedscope** on `/cpu` downloads a
 `.speedscope.json` you can open at [speedscope.app](https://www.speedscope.app) for offline
 sharing (stacks are emitted root-first). The **Leaks** tab on `/memory` reports outstanding
 (created-but-not-disposed) objects via `ext.pulseflow.getLeakReport` (debug/profile only).
+
+## Causes, errors, and images
+
+- **Rebuild causes** (`/problems`, `/widgets`): `ext.pulseflow.getRebuildCauses` attributes each
+  rebuild to the nearest widget that also rebuilt in the same frame — a "Rebuild roots" section
+  shows the likely triggers, and heavy-rebuild problems read "triggered by <root>".
+- **Errors** (`/problems`): `ext.pulseflow.getErrors` counts RenderFlex overflow, assertions, and
+  uncaught exceptions per route, ranked as `error_overflow` / `error_exception` problems.
+- **Images** (`/memory`): `ext.pulseflow.getImageStats` reports image-cache usage and ranks
+  oversized decodes (missing `cacheWidth`/`cacheHeight`), using `debugOnPaintImage`.
+- **Editor links**: source locations are clickable (`vscode://file/...:line`) in the Widgets table
+  and Problems list when the widget inspector reports an absolute path (debug/profile).

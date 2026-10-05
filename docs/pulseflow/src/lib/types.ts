@@ -83,6 +83,8 @@ export interface WidgetRebuildStat {
   sourceUri?: string;
   /** 1-based source line for the widget. */
   sourceLine?: number;
+  /** Rebuild root this widget was attributed to, when known. */
+  cause?: string;
 }
 
 export interface ScreenRebuildStat {
@@ -102,7 +104,9 @@ export type ProblemKind =
   | "cpu_hotspot"
   | "scenario_jank"
   | "memory_growth"
-  | "slow_http";
+  | "slow_http"
+  | "error_overflow"
+  | "error_exception";
 
 export interface PerformanceProblem {
   id: string;
@@ -368,6 +372,74 @@ export interface BridgeCpuExportMessage {
   message?: string;
 }
 
+export interface RebuildCauseRoot {
+  id: string;
+  widget: string;
+  route: string;
+  cause: string;
+  rebuilds: number;
+  ratePerSec: number;
+  children: number;
+  sourceUri?: string;
+  sourceLine?: number;
+}
+
+export interface AttributedRebuild {
+  widget: string;
+  root: string;
+  count: number;
+}
+
+export interface BridgeRebuildCausesMessage {
+  type: "rebuildCauses";
+  available: boolean;
+  windowMs: number;
+  roots: RebuildCauseRoot[];
+  attributed: AttributedRebuild[];
+  message?: string;
+}
+
+export interface ErrorEntry {
+  kind: string;
+  signature: string;
+  count: number;
+  lastMessage?: string;
+  route?: string;
+  top: string[];
+}
+
+export interface BridgeErrorsMessage {
+  type: "errors";
+  available: boolean;
+  total: number;
+  errors: ErrorEntry[];
+  message?: string;
+}
+
+export interface ImageCacheStats {
+  currentSizeBytes: number;
+  currentSize: number;
+  maximumSizeBytes: number;
+  live: number;
+  pending: number;
+}
+
+export interface OversizedImage {
+  source: string;
+  decodedBytes: number;
+  displayBytes: number;
+  overheadBytes: number;
+  count: number;
+}
+
+export interface BridgeImagesMessage {
+  type: "images";
+  available: boolean;
+  cache: ImageCacheStats;
+  oversized: OversizedImage[];
+  message?: string;
+}
+
 export type BridgeServerMessage =
   | BridgeStatusMessage
   | BridgeMetricsMessage
@@ -383,7 +455,10 @@ export type BridgeServerMessage =
   | BridgeMemoryProfileMessage
   | BridgeTimelineExportMessage
   | BridgeLeaksMessage
-  | BridgeCpuExportMessage;
+  | BridgeCpuExportMessage
+  | BridgeRebuildCausesMessage
+  | BridgeErrorsMessage
+  | BridgeImagesMessage;
 
 export type BridgeClientMessage =
   | { type: "connect"; url: string }

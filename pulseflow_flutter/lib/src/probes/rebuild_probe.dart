@@ -1,5 +1,8 @@
+import 'dart:collection';
+
 import 'package:flutter/widgets.dart';
 
+import 'rebuild_cause.dart';
 import 'widget_source.dart';
 
 const int _windowMs = 10000;
@@ -96,6 +99,41 @@ class WidgetEntry {
   DateTime lastSeen = DateTime.now();
 }
 
+class _FrameNode {
+  _FrameNode({
+    required this.widgetId,
+    required this.name,
+    required this.route,
+    this.sourceUri,
+    this.sourceLine,
+  });
+
+  final String widgetId;
+  final String name;
+  final String route;
+  final String? sourceUri;
+  final int? sourceLine;
+}
+
+class _RootWindow {
+  _RootWindow({required this.widget, required this.route, this.sourceUri, this.sourceLine});
+
+  final String widget;
+  final String route;
+  final String? sourceUri;
+  final int? sourceLine;
+  int children = 0;
+  final List<DateTime> hits = <DateTime>[];
+}
+
+class _AttrWindow {
+  _AttrWindow(this.widget, this.root);
+
+  final String widget;
+  final String root;
+  final List<DateTime> hits = <DateTime>[];
+}
+
 /// Samples dirty-widget rebuilds via [debugOnRebuildDirtyWidget] and resolves
 /// the app source location of each widget on first sight.
 class RebuildProbe {
@@ -112,13 +150,21 @@ class RebuildProbe {
   /// Resolve `file:line` for new widgets (debug/profile only).
   bool resolveSource = true;
 
+  /// Last route seen for a rebuilt widget (used to attribute errors).
+  String? lastRoute;
+
   RebuildDirtyWidgetCallback? _previous;
   final Map<String, WidgetEntry> entries = <String, WidgetEntry>{};
+  final HashMap<Element, _FrameNode> _frameNodes = HashMap<Element, _FrameNode>.identity();
+  bool _frameScheduled = false;
+  final Map<String, _RootWindow> _roots = <String, _RootWindow>{};
+  final Map<String, _AttrWindow> _attributed = <String, _AttrWindow>{};
 
   void start() {
     if (active) return;
     active = true;
     frozen = false;
+    _frameNodes.clear();
     _previous = debugOnRebuildDirtyWidget;
     debugOnRebuildDirtyWidget = (Element element, bool builtOnce) {
       _previous?.call(element, builtOnce);
@@ -133,10 +179,16 @@ class RebuildProbe {
     active = false;
     frozen = false;
     entries.clear();
+    _frameNodes.clear();
+    _roots.clear();
+    _attributed.clear();
   }
 
   void reset() {
     entries.clear();
+    _frameNodes.clear();
+    _roots.clear();
+    _attributed.clear();
   }
 
   void setFrozen(bool value) {
@@ -167,6 +219,7 @@ class RebuildProbe {
     }
     final String id = '$route|$name|${keyLabel ?? ''}';
     final DateTime now = DateTime.now();
+    lastRoute = route;
     WidgetEntry? entry = entries[id];
     if (entry == null) {
       String? sourceFile;
@@ -192,7 +245,148 @@ class RebuildProbe {
     entry.lastSeen = now;
     if (!frozen) {
       entry.hits.add(now);
+      _frameNodes[element] = _FrameNode(
+        widgetId: id,
+        name: name,
+        route: route,
+        sourceUri: entry.sourceFile,
+        sourceLine: entry.sourceLine,
+      );
+      _scheduleFrame();
     }
+  }
+
+  void _scheduleFrame() {
+    if (_frameScheduled || !active) return;
+    _frameScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((Duration _) {
+      _frameScheduled = false;
+      _flushFrame();
+    });
+  }
+
+  void _flushFrame() {
+    if (_frameNodes.isEmpty) return;
+    try {
+      final List<Element> elements = _frameNodes.keys.toList();
+      final HashMap<Element, int> index = HashMap<Element, int>.identity();
+      for (var i = 0; i < elements.length; i++) {
+        index[elements[i]] = i;
+      }
+      final List<RebuildNode> input = <RebuildNode>[];
+      for (var i = 0; i < elements.length; i++) {
+        final Element element = elements[i];
+        final _FrameNode meta = _frameNodes[element]!;
+        int? parent;
+        try {
+          element.visitAncestorElements((Element ancestor) {
+            final int? idx = index[ancestor];
+            if (idx != null) {
+              parent = idx;
+              return false;
+            }
+            return true;
+          });
+        } catch (_) {
+          // Element may be defunct by flush time; keep it as a root.
+        }
+        input.add(
+          RebuildNode(
+            widgetId: meta.widgetId,
+            name: meta.name,
+            route: meta.route,
+            parentIndex: parent,
+            sourceUri: meta.sourceUri,
+            sourceLine: meta.sourceLine,
+          ),
+        );
+      }
+      final RebuildCauseReport report = groupRebuilds(input);
+      final DateTime now = DateTime.now();
+      for (final RebuildCauseGroup group in report.roots) {
+        final _RootWindow window = _roots.putIfAbsent(
+          group.rootId,
+          () => _RootWindow(
+            widget: group.widget,
+            route: group.route,
+            sourceUri: group.sourceUri,
+            sourceLine: group.sourceLine,
+          ),
+        );
+        window.hits.add(now);
+        if (group.children > window.children) window.children = group.children;
+      }
+      for (final AttributedRebuild a in report.attributed) {
+        final _AttrWindow window = _attributed.putIfAbsent(
+          '${a.widget}|${a.root}',
+          () => _AttrWindow(a.widget, a.root),
+        );
+        for (var i = 0; i < a.count; i++) {
+          window.hits.add(now);
+        }
+      }
+    } finally {
+      _frameNodes.clear();
+    }
+  }
+
+  /// Rebuild roots and attributed descendants over the rolling window.
+  Map<String, Object?> causes({int limit = 20}) {
+    final DateTime now = DateTime.now();
+    final DateTime cutoff = now.subtract(const Duration(milliseconds: _windowMs));
+    for (final _RootWindow w in _roots.values) {
+      w.hits.removeWhere((DateTime t) => t.isBefore(cutoff));
+    }
+    for (final _AttrWindow w in _attributed.values) {
+      w.hits.removeWhere((DateTime t) => t.isBefore(cutoff));
+    }
+    _roots.removeWhere((_, _RootWindow w) => w.hits.isEmpty);
+    _attributed.removeWhere((_, _AttrWindow w) => w.hits.isEmpty);
+
+    const double windowSec = _windowMs / 1000.0;
+    final List<Map<String, Object?>> roots = _roots.entries.map(
+      (MapEntry<String, _RootWindow> e) {
+        final _RootWindow w = e.value;
+        final int count = w.hits.length;
+        return <String, Object?>{
+          'id': e.key,
+          'widget': w.widget,
+          'route': w.route,
+          'cause': 'self',
+          'rebuilds': count,
+          'ratePerSec': double.parse((count / windowSec).toStringAsFixed(2)),
+          'children': w.children,
+          if (w.sourceUri != null) 'sourceUri': w.sourceUri,
+          if (w.sourceLine != null) 'sourceLine': w.sourceLine,
+        };
+      },
+    ).toList()
+      ..sort(
+        (Map<String, Object?> a, Map<String, Object?> b) =>
+            (b['rebuilds'] as int).compareTo(a['rebuilds'] as int),
+      );
+
+    final List<Map<String, Object?>> attributed = _attributed.values
+        .map(
+          (_AttrWindow w) => <String, Object?>{
+            'widget': w.widget,
+            'root': w.root,
+            'count': w.hits.length,
+          },
+        )
+        .toList()
+      ..sort(
+        (Map<String, Object?> a, Map<String, Object?> b) =>
+            (b['count'] as int).compareTo(a['count'] as int),
+      );
+
+    return <String, Object?>{
+      'ok': true,
+      'active': active,
+      'windowMs': _windowMs,
+      'roots': roots.take(limit).toList(),
+      'attributed': attributed.take(limit).toList(),
+    };
   }
 
   bool _isAppSource(String file) {

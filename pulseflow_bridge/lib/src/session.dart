@@ -242,8 +242,16 @@ class BridgeSession {
         unawaited(_handleScenario('list', null, null));
       }
       _pollTimer = Timer.periodic(const Duration(milliseconds: 500), (_) => unawaited(_pollLiveMetrics()));
-      _hotTimer = Timer.periodic(const Duration(milliseconds: 1000), (_) => unawaited(_pollHotWidgets()));
+      _hotTimer = Timer.periodic(const Duration(milliseconds: 1000), (_) {
+        unawaited(_pollHotWidgets());
+        unawaited(_pollRebuildCauses());
+        unawaited(_pollErrors());
+        unawaited(_pollImages());
+      });
       unawaited(_pollHotWidgets());
+      unawaited(_pollRebuildCauses());
+      unawaited(_pollErrors());
+      unawaited(_pollImages());
     } catch (error) {
       _disconnectVm();
       _send(<String, Object?>{'type': 'status', 'status': 'error', 'message': '$error'});
@@ -775,6 +783,61 @@ class BridgeSession {
     }
   }
 
+  Future<void> _pollRebuildCauses() async {
+    if (_mode != 'live' || _isolateId == null) return;
+    if (!_extensionMethods.contains('ext.pulseflow.getRebuildCauses')) return;
+    try {
+      final Map<String, dynamic>? data = await _callExtension(
+        'ext.pulseflow.getRebuildCauses',
+        args: <String, dynamic>{'limit': '20'},
+      );
+      if (data == null) return;
+      _send(<String, Object?>{
+        'type': 'rebuildCauses',
+        'available': data['available'] != false,
+        'windowMs': data['windowMs'] ?? 10000,
+        'roots': (data['roots'] as List<dynamic>?) ?? <Object?>[],
+        'attributed': (data['attributed'] as List<dynamic>?) ?? <Object?>[],
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _pollErrors() async {
+    if (_mode != 'live' || _isolateId == null) return;
+    if (!_extensionMethods.contains('ext.pulseflow.getErrors')) return;
+    try {
+      final Map<String, dynamic>? data = await _callExtension(
+        'ext.pulseflow.getErrors',
+        args: <String, dynamic>{'limit': '40'},
+      );
+      if (data == null) return;
+      _send(<String, Object?>{
+        'type': 'errors',
+        'available': data['available'] != false,
+        'total': data['total'] ?? 0,
+        'errors': (data['errors'] as List<dynamic>?) ?? <Object?>[],
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _pollImages() async {
+    if (_mode != 'live' || _isolateId == null) return;
+    if (!_extensionMethods.contains('ext.pulseflow.getImageStats')) return;
+    try {
+      final Map<String, dynamic>? data = await _callExtension(
+        'ext.pulseflow.getImageStats',
+        args: <String, dynamic>{'limit': '30'},
+      );
+      if (data == null) return;
+      _send(<String, Object?>{
+        'type': 'images',
+        'available': data['available'] != false,
+        'cache': data['cache'] ?? <String, Object?>{},
+        'oversized': (data['oversized'] as List<dynamic>?) ?? <Object?>[],
+      });
+    } catch (_) {}
+  }
+
   Map<String, Object?> _mapWidgetStat(
     Map<String, dynamic> raw,
     int totalWindow,
@@ -795,6 +858,7 @@ class BridgeSession {
       if (keyLabel != null) 'keyLabel': keyLabel,
       if (raw['sourceUri'] != null) 'sourceUri': '${raw['sourceUri']}',
       if (raw['sourceLine'] != null) 'sourceLine': (raw['sourceLine'] as num).toInt(),
+      if (raw['cause'] != null) 'cause': '${raw['cause']}',
       'rebuildsSession': rebuildsSession,
       'rebuildsWindow': rebuildsWindow,
       'ratePerSec': (raw['ratePerSec'] as num?)?.toDouble() ??
@@ -1628,8 +1692,16 @@ class BridgeSession {
     _send(<String, Object?>{'type': 'scenarioStatus', 'scenarios': mockScenarios, 'running': null, 'message': 'Demo scenarios ready'});
     _send(<String, Object?>{'type': 'network', 'available': true, 'message': 'Mock network profile enabled'});
     _emitMockHotWidgets();
+    _emitMockRebuildCauses();
+    _emitMockErrors();
+    _emitMockImages();
     _mockTimer = Timer.periodic(const Duration(milliseconds: 500), (_) => _emitMockMetrics());
-    _hotTimer = Timer.periodic(const Duration(milliseconds: 1000), (_) => _emitMockHotWidgets());
+    _hotTimer = Timer.periodic(const Duration(milliseconds: 1000), (_) {
+      _emitMockHotWidgets();
+      _emitMockRebuildCauses();
+      _emitMockErrors();
+      _emitMockImages();
+    });
   }
 
   void _sendMockExtension() {
@@ -1773,6 +1845,94 @@ class BridgeSession {
     };
     _lastHotPayload = payload;
     _send(payload);
+  }
+
+  void _emitMockRebuildCauses() {
+    if (_hotWidgetsFrozen) return;
+    _send(<String, Object?>{
+      'type': 'rebuildCauses',
+      'available': true,
+      'windowMs': 10000,
+      'roots': <Map<String, Object?>>[
+        {
+          'id': '/invoices|InvoiceListState|',
+          'widget': 'InvoiceListState',
+          'route': '/invoices',
+          'cause': 'self',
+          'rebuilds': 36,
+          'ratePerSec': 3.6,
+          'children': 2,
+        },
+        {
+          'id': '/dashboard|DashboardScope|',
+          'widget': 'DashboardScope',
+          'route': '/dashboard',
+          'cause': 'self',
+          'rebuilds': 18,
+          'ratePerSec': 1.8,
+          'children': 1,
+        },
+      ],
+      'attributed': <Map<String, Object?>>[
+        {'widget': 'InvoiceCard', 'root': 'InvoiceListState', 'count': 24},
+        {'widget': 'InvoiceListTile', 'root': 'InvoiceListState', 'count': 12},
+        {'widget': 'AnimatedBuilder', 'root': 'DashboardScope', 'count': 18},
+      ],
+    });
+  }
+
+  void _emitMockErrors() {
+    _send(<String, Object?>{
+      'type': 'errors',
+      'available': true,
+      'total': 3,
+      'errors': <Map<String, Object?>>[
+        {
+          'kind': 'overflow',
+          'signature': 'A RenderFlex overflowed by 24 pixels on the right',
+          'count': 2,
+          'route': '/invoices',
+          'top': <String>['#0 RenderFlex.performLayout', '#1 RenderObject.layout'],
+        },
+        {
+          'kind': 'exception',
+          'signature': 'Bad state: no element',
+          'count': 1,
+          'route': '/reports',
+          'top': <String>['#0 List.firstWhere'],
+        },
+      ],
+    });
+  }
+
+  void _emitMockImages() {
+    _send(<String, Object?>{
+      'type': 'images',
+      'available': true,
+      'cache': <String, Object?>{
+        'currentSizeBytes': 12 * 1024 * 1024,
+        'currentSize': 9,
+        'maximumSizeBytes': 100 * 1024 * 1024,
+        'live': 4,
+        'pending': 0,
+      },
+      'oversized': <Map<String, Object?>>[
+        {
+          'source': 'assets/hero.png',
+          'decodedBytes': 4194304,
+          'displayBytes': 65536,
+          'overheadBytes': 4128768,
+          'count': 12,
+        },
+        {
+          'source': 'https://cdn.example.com/banner.jpg',
+          'decodedBytes': 2097152,
+          'displayBytes': 131072,
+          'overheadBytes': 1966080,
+          'count': 6,
+        },
+      ],
+    });
   }
 
   void _mockHotWidgetsControl(String action) {

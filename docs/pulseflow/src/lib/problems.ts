@@ -1,7 +1,9 @@
 import { isAppCpuFrame, tipForCpuHotspot } from "@/lib/cpu-profile";
 import { FRAME_BUDGET } from "@/lib/chart-utils";
 import type {
+  AttributedRebuild,
   CpuProfileSummary,
+  ErrorEntry,
   GcEvent,
   HotWidgetsPayload,
   MemoryDiff,
@@ -30,7 +32,11 @@ export function tipForWidget(name: string, share: number): string {
 
 const severityRank = { high: 0, medium: 1, low: 2 } as const;
 
-function hotRebuildProblem(w: WidgetRebuildStat, buildMs?: number): PerformanceProblem | null {
+function hotRebuildProblem(
+  w: WidgetRebuildStat,
+  buildMs?: number,
+  cause?: string,
+): PerformanceProblem | null {
   if (w.isFramework) return null;
   if (w.ratePerSec < 8 && w.share < 20) return null;
   const severity: PerformanceProblem["severity"] =
@@ -40,12 +46,13 @@ function hotRebuildProblem(w: WidgetRebuildStat, buildMs?: number): PerformanceP
   const sourceLabel = w.sourceUri
     ? ` — ${w.sourceUri}${w.sourceLine ? `:${w.sourceLine}` : ""}`
     : "";
+  const causeLabel = cause && cause !== w.name ? ` — triggered by ${cause}` : "";
   return {
     id: `hot_rebuild:${w.id}`,
     severity,
     kind: "hot_rebuild",
     title: `${w.name} rebuilds heavily${routeLabel}`,
-    detail: `${w.ratePerSec.toFixed(1)}/s in the last window (${w.share.toFixed(1)}% of rebuilds)${sourceLabel}`,
+    detail: `${w.ratePerSec.toFixed(1)}/s in the last window (${w.share.toFixed(1)}% of rebuilds)${sourceLabel}${causeLabel}`,
     action: tipForWidget(w.name, w.share),
     route: w.route,
     widget: w.name,
@@ -75,6 +82,8 @@ export function buildProblems(input: {
   points?: MetricPoint[];
   scenarioResult?: ScenarioResult | null;
   scenarioRunning?: string | null;
+  rebuildCauses?: { attributed: AttributedRebuild[] } | null;
+  errors?: ErrorEntry[] | null;
 }): PerformanceProblem[] {
   const {
     hot,
@@ -87,6 +96,8 @@ export function buildProblems(input: {
     points = [],
     scenarioResult,
     scenarioRunning,
+    rebuildCauses,
+    errors,
   } = input;
   const problems: PerformanceProblem[] = [];
 
@@ -144,8 +155,11 @@ export function buildProblems(input: {
   }
 
   if (hot?.available && hot.widgets.length) {
+    const causeByWidget = new Map(
+      (rebuildCauses?.attributed ?? []).map((a) => [a.widget, a.root]),
+    );
     for (const w of hot.widgets) {
-      const p = hotRebuildProblem(w, buildMs);
+      const p = hotRebuildProblem(w, buildMs, causeByWidget.get(w.name));
       if (p) problems.push(p);
     }
   }
@@ -214,6 +228,24 @@ export function buildProblems(input: {
       detail: `${r.latencyMs.toFixed(0)} ms · status ${r.status ?? "—"}`,
       action: "Cache responses, paginate payloads, or move work off the critical path.",
       ratePerSec: r.latencyMs,
+    });
+  }
+
+  for (const e of errors ?? []) {
+    if (e.count < 1) continue;
+    const isOverflow = e.kind === "overflow";
+    const isAssert = e.kind === "assert";
+    problems.push({
+      id: `error:${e.kind}:${e.signature}`,
+      severity: isOverflow || isAssert ? "high" : "medium",
+      kind: isOverflow ? "error_overflow" : "error_exception",
+      title: `${isOverflow ? "Overflow" : isAssert ? "Assertion" : "Error"}: ${e.signature}`,
+      detail: `${e.count}× ${e.kind}${e.route ? ` on ${e.route}` : ""}`,
+      action: isOverflow
+        ? "Wrap the overflowing row/column in Expanded/Flexible or a scroll view."
+        : "Fix the exception; expand the stack frames for the source.",
+      route: e.route,
+      ratePerSec: e.count,
     });
   }
 

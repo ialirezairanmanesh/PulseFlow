@@ -15,20 +15,25 @@ import { normalizeHotWidgetsMessage } from "@/lib/normalize-hot";
 import { buildProblems, computeBaselineMetrics } from "@/lib/problems";
 import { downloadBase64 } from "@/lib/session-report";
 import type {
+  AttributedRebuild,
   BridgeHotWidgetsMessage,
   BridgeServerMessage,
   CapabilityMap,
   ConnectionStatus,
   CpuProfileSummary,
   DiscoveredApp,
+  ErrorEntry,
   ExtensionInfo,
   GcEvent,
   HotWidgetsPayload,
+  ImageCacheStats,
   LeakEntry,
   MemoryDiff,
   MemorySnapshot,
   MetricPoint,
   NetworkRequest,
+  OversizedImage,
+  RebuildCauseRoot,
   RetainingPathNode,
   ScenarioInfo,
   ScenarioResult,
@@ -36,6 +41,19 @@ import type {
   SocketSample,
   TimelineMarker,
 } from "@/lib/types";
+
+export interface RebuildCausesState {
+  available: boolean;
+  windowMs: number;
+  roots: RebuildCauseRoot[];
+  attributed: AttributedRebuild[];
+}
+
+export interface ImageStatsState {
+  available: boolean;
+  cache: ImageCacheStats;
+  oversized: OversizedImage[];
+}
 
 const MAX_POINTS = 60;
 const MAX_GC = 40;
@@ -107,6 +125,9 @@ type PulseContextValue = {
   timelineMarkers: TimelineMarker[];
   timelineMessage?: string;
   leaks: LeakEntry[];
+  rebuildCauses: RebuildCausesState | null;
+  appErrors: ErrorEntry[];
+  images: ImageStatsState | null;
   baselines: SessionBaseline[];
   connect: (overrideUrl?: string) => void;
   disconnect: () => void;
@@ -177,6 +198,9 @@ export function PulseProvider({ children }: { children: ReactNode }) {
   const [timelineMarkers, setTimelineMarkers] = useState<TimelineMarker[]>([]);
   const [timelineMessage, setTimelineMessage] = useState<string>();
   const [leaks, setLeaks] = useState<LeakEntry[]>([]);
+  const [rebuildCauses, setRebuildCauses] = useState<RebuildCausesState | null>(null);
+  const [appErrors, setAppErrors] = useState<ErrorEntry[]>([]);
+  const [images, setImages] = useState<ImageStatsState | null>(null);
   const [baselines, setBaselines] = useState<SessionBaseline[]>([]);
 
   const clientRef = useRef<PulseBridgeClient | null>(null);
@@ -259,6 +283,9 @@ export function PulseProvider({ children }: { children: ReactNode }) {
     setTimelineMarkers([]);
     setTimelineMessage(undefined);
     setLeaks([]);
+    setRebuildCauses(null);
+    setAppErrors([]);
+    setImages(null);
     setBaselines([]);
   }, []);
 
@@ -410,6 +437,24 @@ export function PulseProvider({ children }: { children: ReactNode }) {
             if (msg.available && msg.base64 && msg.fileName) {
               downloadBase64(msg.fileName, msg.base64, "application/json");
             }
+            break;
+          case "rebuildCauses":
+            setRebuildCauses({
+              available: msg.available,
+              windowMs: msg.windowMs,
+              roots: msg.roots ?? [],
+              attributed: msg.attributed ?? [],
+            });
+            break;
+          case "errors":
+            setAppErrors(msg.available ? msg.errors ?? [] : []);
+            break;
+          case "images":
+            setImages({
+              available: msg.available,
+              cache: msg.cache,
+              oversized: msg.oversized ?? [],
+            });
             break;
         }
       },
@@ -703,6 +748,9 @@ export function PulseProvider({ children }: { children: ReactNode }) {
       timelineMarkers,
       timelineMessage,
       leaks,
+      rebuildCauses,
+      appErrors,
+      images,
       baselines,
       connect,
       disconnect,
@@ -766,6 +814,9 @@ export function PulseProvider({ children }: { children: ReactNode }) {
       timelineMarkers,
       timelineMessage,
       leaks,
+      rebuildCauses,
+      appErrors,
+      images,
       baselines,
       connect,
       disconnect,

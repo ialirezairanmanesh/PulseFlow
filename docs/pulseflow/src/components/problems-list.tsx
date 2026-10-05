@@ -5,6 +5,7 @@ import { Snowflake, CircleDot, FileDown } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { buildProblems } from "@/lib/problems";
+import { toEditorUrl } from "@/lib/editor-link";
 import { usePulse } from "@/lib/pulse-store";
 import type { PerformanceProblem } from "@/lib/types";
 
@@ -33,6 +34,8 @@ export function ProblemsList() {
     network,
     scenarioResult,
     scenarioRunning,
+    rebuildCauses,
+    appErrors,
   } = usePulse();
 
   const input = probeFrozen && problemsSnapshot
@@ -63,6 +66,8 @@ export function ProblemsList() {
         points,
         scenarioResult: input.scenarioResult,
         scenarioRunning: input.scenarioRunning,
+        rebuildCauses,
+        errors: appErrors,
       });
 
   return (
@@ -186,6 +191,16 @@ export function ProblemsList() {
                   {p.widget ?? ""}
                 </p>
               )}
+              {p.sourceUri && toEditorUrl(p.sourceUri, p.sourceLine) && (
+                <p className="mt-1 font-mono text-[11px]">
+                  <a
+                    className="underline decoration-dotted opacity-80 hover:opacity-100"
+                    href={toEditorUrl(p.sourceUri, p.sourceLine)!}
+                  >
+                    {`${p.sourceUri.split("/").pop()}${p.sourceLine ? `:${p.sourceLine}` : ""}`}
+                  </a>
+                </p>
+              )}
             </li>
           ))}
         </ul>
@@ -214,6 +229,64 @@ export function ProblemsList() {
               </div>
             ))}
           </div>
+        </section>
+      )}
+
+      {!isRecording && rebuildCauses && rebuildCauses.roots.length > 0 && (
+        <section className="rounded-xl border border-white/10 bg-black/20 px-4 py-4 backdrop-blur-sm">
+          <h3 className="font-[family-name:var(--font-display)] text-lg tracking-tight text-[var(--ink)]">
+            Rebuild roots
+          </h3>
+          <p className="mb-3 text-sm text-[var(--ink-muted)]">
+            Widgets that rebuilt without a rebuilt ancestor — the likely trigger for the rebuilds
+            below
+          </p>
+          <div className="space-y-2">
+            {rebuildCauses.roots.slice(0, 6).map((r) => (
+              <div
+                key={r.id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-white/8 bg-white/5 px-3 py-2 text-sm"
+              >
+                <span className="font-mono text-[var(--ink)]">{r.widget}</span>
+                <span className="text-[var(--ink-muted)]">
+                  {r.ratePerSec.toFixed(1)}/s · {r.rebuilds} rebuilds · {r.children} children ·{" "}
+                  {r.route}
+                </span>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {!isRecording && appErrors.length > 0 && (
+        <section className="rounded-xl border border-white/10 bg-black/20 px-4 py-4 backdrop-blur-sm">
+          <h3 className="font-[family-name:var(--font-display)] text-lg tracking-tight text-[var(--ink)]">
+            Errors
+          </h3>
+          <p className="mb-3 text-sm text-[var(--ink-muted)]">
+            Overflow, assertions, and exceptions captured at runtime
+          </p>
+          <ul className="space-y-2 text-sm">
+            {appErrors.slice(0, 8).map((e) => (
+              <li
+                key={`${e.kind}-${e.signature}`}
+                className="rounded-md border border-white/8 bg-white/5 px-3 py-2"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="text-[var(--ink)]">{e.signature}</span>
+                  <span className="text-[var(--ink-muted)]">
+                    {e.count}× · {e.kind}
+                    {e.route ? ` · ${e.route}` : ""}
+                  </span>
+                </div>
+                {e.top.length > 0 && (
+                  <div className="mt-1 font-mono text-[11px] text-[var(--ink-faint)]">
+                    {e.top[0]}
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
         </section>
       )}
     </div>

@@ -3,7 +3,9 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart' show kReleaseMode;
 
+import 'probes/error_probe.dart';
 import 'probes/frame_probe.dart';
+import 'probes/image_probe.dart';
 import 'probes/leak_probe.dart';
 import 'probes/network_probe.dart';
 import 'probes/rebuild_probe.dart';
@@ -40,6 +42,8 @@ void registerPulseFlow({
   bool captureFrames = true,
   bool captureNetwork = true,
   bool trackLeaks = true,
+  bool trackErrors = true,
+  bool trackImages = true,
 }) {
   if (captureFrames) {
     FrameProbe.instance.start();
@@ -50,6 +54,13 @@ void registerPulseFlow({
   }
   if (trackLeaks) {
     LeakProbe.instance.start();
+  }
+  if (trackErrors) {
+    ErrorProbe.instance.routeProvider = () => RebuildProbe.instance.lastRoute;
+    ErrorProbe.instance.start();
+  }
+  if (trackImages) {
+    ImageProbe.instance.start();
   }
   if (_registered) return;
   _registered = true;
@@ -107,6 +118,14 @@ void _registerExtensions() {
     return RebuildProbe.instance.snapshot(limit: intParam(params, 'limit', 40));
   });
 
+  registerPulseExtension('ext.pulseflow.getRebuildCauses', (
+    Map<String, String> params,
+  ) {
+    if (kReleaseMode) return _releaseOnly('Rebuild cause probe');
+    if (!RebuildProbe.instance.active) RebuildProbe.instance.start();
+    return RebuildProbe.instance.causes(limit: intParam(params, 'limit', 20));
+  });
+
   // --- Network capture ---
   registerPulseExtension('ext.pulseflow.getNetworkLog', (
     Map<String, String> params,
@@ -126,6 +145,20 @@ void _registerExtensions() {
       threshold: intParam(params, 'threshold', 1),
       limit: intParam(params, 'limit', 30),
     );
+  });
+
+  // --- Errors ---
+  registerPulseExtension('ext.pulseflow.getErrors', (
+    Map<String, String> params,
+  ) {
+    return ErrorProbe.instance.snapshot(limit: intParam(params, 'limit', 40));
+  });
+
+  // --- Images & assets ---
+  registerPulseExtension('ext.pulseflow.getImageStats', (
+    Map<String, String> params,
+  ) {
+    return ImageProbe.instance.snapshot(limit: intParam(params, 'limit', 30));
   });
 
   // --- Stress actions ---

@@ -122,6 +122,22 @@ describe("buildProblems", () => {
     });
     expect(problems.length).toBeLessThanOrEqual(8);
   });
+
+  it("ranks overflow and exception errors", () => {
+    const problems = buildProblems({
+      hot: null,
+      hotAvailable: true,
+      gcEvents: [],
+      errors: [
+        { kind: "overflow", signature: "RenderFlex overflowed by 24px", count: 3, route: "/invoices", top: [] },
+        { kind: "exception", signature: "Bad state: no element", count: 1, top: [] },
+      ],
+    });
+    const overflow = problems.find((p) => p.kind === "error_overflow");
+    expect(overflow?.severity).toBe("high");
+    expect(overflow?.route).toBe("/invoices");
+    expect(problems.some((p) => p.kind === "error_exception")).toBe(true);
+  });
 });
 
 describe("computeBaselineMetrics", () => {

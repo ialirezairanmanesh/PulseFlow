@@ -39,11 +39,16 @@ Options: `appPackage`, `captureFrames`, `captureNetwork`, `trackLeaks`.
 | RPC | Purpose |
 | --- | --- |
 | `getFrameStats` | Accurate frame timings + refresh rate/budget |
+| `getRebuildCauses` | Rebuild roots + attributed descendants |
+| `getErrors` | Overflow / assertion / exception signatures |
+| `getImageStats` | Image cache health + oversized decodes |
 | `getNetworkLog` | Drain captured HTTP requests |
 | `getLeakReport` | Outstanding objects by class |
 | `startWidgetProbe` / `stopWidgetProbe` / `resetWidgetProbe` / `setWidgetProbeFrozen` / `getHotWidgets` | Rebuild probe with source locations |
 | `injectInvoices` / `spikeCpu` / `allocateMemory` | Stress actions |
 | `listScenarios` / `runScenario` / `stopScenario` | Repeatable lab scenarios |
+
+Options: `appPackage`, `captureFrames`, `captureNetwork`, `trackLeaks`, `trackErrors`, `trackImages`.
 
 Notes: the widget probe, source locations, leak signals, and scenarios require debug/profile
 builds. HTTP capture works in all modes but adds a thin wrapper around `HttpClient`.

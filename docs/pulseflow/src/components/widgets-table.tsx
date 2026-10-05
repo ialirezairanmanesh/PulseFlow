@@ -1,14 +1,20 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { toEditorUrl } from "@/lib/editor-link";
 import { tipForWidget } from "@/lib/problems";
 import { usePulse } from "@/lib/pulse-store";
 
 export function WidgetsTable() {
-  const { hot, hotAvailable, hotMessage, connected, probeFrozen } = usePulse();
+  const { hot, hotAvailable, hotMessage, connected, probeFrozen, rebuildCauses } = usePulse();
   const [routeFilter, setRouteFilter] = useState<string>("all");
   const [appOnly, setAppOnly] = useState(true);
   const [duringJankOnly, setDuringJankOnly] = useState(false);
+
+  const causeByWidget = useMemo(
+    () => new Map((rebuildCauses?.attributed ?? []).map((a) => [a.widget, a.root])),
+    [rebuildCauses],
+  );
 
   const routes = useMemo(() => {
     const set = new Set((hot?.widgets ?? []).map((w) => w.route));
@@ -103,6 +109,7 @@ export function WidgetsTable() {
                   <th className="py-2 font-medium">Widget</th>
                   <th className="py-2 font-medium">Route</th>
                   <th className="py-2 font-medium">Source</th>
+                  <th className="py-2 font-medium">Cause</th>
                   <th className="py-2 font-medium">Window</th>
                   <th className="py-2 font-medium">Session</th>
                   <th className="py-2 font-medium">Rate/s</th>
@@ -125,13 +132,27 @@ export function WidgetsTable() {
                       )}
                     </td>
                     <td className="py-2.5 font-mono text-[12px]">{w.route}</td>
-                    <td
-                      className="py-2.5 font-mono text-[11px] text-[var(--ink-faint)]"
-                      title={w.sourceUri ? `${w.sourceUri}:${w.sourceLine ?? 0}` : undefined}
-                    >
-                      {w.sourceUri
-                        ? `${w.sourceUri.split("/").pop()}${w.sourceLine ? `:${w.sourceLine}` : ""}`
-                        : "—"}
+                    <td className="py-2.5 font-mono text-[11px] text-[var(--ink-faint)]">
+                      {w.sourceUri ? (
+                        toEditorUrl(w.sourceUri, w.sourceLine) ? (
+                          <a
+                            className="underline decoration-dotted hover:text-[var(--accent)]"
+                            href={toEditorUrl(w.sourceUri, w.sourceLine)!}
+                            title={`${w.sourceUri}:${w.sourceLine ?? 0}`}
+                          >
+                            {`${w.sourceUri.split("/").pop()}${w.sourceLine ? `:${w.sourceLine}` : ""}`}
+                          </a>
+                        ) : (
+                          <span title={`${w.sourceUri}:${w.sourceLine ?? 0}`}>
+                            {`${w.sourceUri.split("/").pop()}${w.sourceLine ? `:${w.sourceLine}` : ""}`}
+                          </span>
+                        )
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                    <td className="py-2.5 text-[11px] text-[var(--ink-faint)]">
+                      {causeByWidget.get(w.name) ?? "—"}
                     </td>
                     <td className="py-2.5">{w.rebuildsWindow}</td>
                     <td className="py-2.5">{w.rebuildsSession}</td>

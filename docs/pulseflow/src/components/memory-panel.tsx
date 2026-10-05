@@ -29,6 +29,7 @@ export function MemoryPanel() {
     memoryMessage,
     capabilities,
     leaks,
+    images,
     captureMemorySnapshot,
     diffMemorySnapshots,
     requestRetainingPath,
@@ -132,6 +133,52 @@ export function MemoryPanel() {
                   </li>
                 ))}
               </ul>
+            )}
+          </section>
+
+          <section className="rounded-xl border border-white/10 bg-black/20 px-4 py-4 backdrop-blur-sm">
+            <h3 className="font-[family-name:var(--font-display)] text-lg tracking-tight text-[var(--ink)]">
+              Images
+            </h3>
+            {!images ? (
+              <p className="mt-2 text-sm text-[var(--ink-muted)]">No image data yet</p>
+            ) : !images.available ? (
+              <p className="mt-2 text-sm text-[var(--ink-muted)]">
+                Image tracking is available in debug/profile builds.
+              </p>
+            ) : (
+              <>
+                <p className="mt-2 text-sm text-[var(--ink-muted)]">
+                  Cache {formatBytes(images.cache.currentSizeBytes)} /{" "}
+                  {formatBytes(images.cache.maximumSizeBytes)} · {images.cache.currentSize} entries ·{" "}
+                  {images.cache.live} live · {images.cache.pending} pending
+                </p>
+                {images.oversized.length === 0 ? (
+                  <p className="mt-2 text-sm text-[var(--ink-muted)]">
+                    No oversized decodes detected
+                  </p>
+                ) : (
+                  <ul className="mt-3 space-y-2 text-sm">
+                    {images.oversized.slice(0, 8).map((img) => (
+                      <li
+                        key={img.source}
+                        className="rounded-md border border-white/8 bg-white/5 px-3 py-2 text-[var(--ink-muted)]"
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="truncate text-[var(--ink)]">{img.source}</span>
+                          <span>
+                            +{formatBytes(img.overheadBytes)} overhead · {img.count}×
+                          </span>
+                        </div>
+                        <div className="mt-1 text-[11px] text-[var(--ink-faint)]">
+                          decoded {formatBytes(img.decodedBytes)} · shown{" "}
+                          {formatBytes(img.displayBytes)} — add cacheWidth/cacheHeight
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
             )}
           </section>
         </>

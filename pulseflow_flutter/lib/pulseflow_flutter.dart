@@ -13,9 +13,12 @@
 library;
 
 export 'src/device/display_info.dart';
+export 'src/probes/error_probe.dart';
 export 'src/probes/frame_probe.dart';
+export 'src/probes/image_probe.dart';
 export 'src/probes/leak_probe.dart';
 export 'src/probes/network_probe.dart';
+export 'src/probes/rebuild_cause.dart';
 export 'src/probes/rebuild_probe.dart';
 export 'src/probes/widget_source.dart';
 export 'src/pulseflow_registration.dart';
