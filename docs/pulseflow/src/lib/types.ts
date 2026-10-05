@@ -440,6 +440,20 @@ export interface BridgeImagesMessage {
   message?: string;
 }
 
+export interface ProbeAvailability {
+  rebuildProbe?: boolean;
+  sourceLocations?: boolean;
+  errors?: boolean;
+  images?: boolean;
+  leaks?: boolean;
+}
+
+export interface BridgeBuildInfoMessage {
+  type: "buildInfo";
+  buildMode: string;
+  probes: ProbeAvailability;
+}
+
 export type BridgeServerMessage =
   | BridgeStatusMessage
   | BridgeMetricsMessage
@@ -458,7 +472,8 @@ export type BridgeServerMessage =
   | BridgeCpuExportMessage
   | BridgeRebuildCausesMessage
   | BridgeErrorsMessage
-  | BridgeImagesMessage;
+  | BridgeImagesMessage
+  | BridgeBuildInfoMessage;
 
 export type BridgeClientMessage =
   | { type: "connect"; url: string }

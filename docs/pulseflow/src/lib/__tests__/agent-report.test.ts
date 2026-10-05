@@ -72,6 +72,34 @@ describe("buildAgentReportMarkdown", () => {
     expect(md).toContain("/abs/card.dart:42");
     expect(md).toContain("120 Hz");
   });
+
+  it("explains profile-mode gaps in the coverage section", () => {
+    const md = buildAgentReportMarkdown({
+      ...input,
+      buildInfo: {
+        buildMode: "profile",
+        probes: { rebuildProbe: false, sourceLocations: false, leaks: false, errors: true, images: true },
+      },
+      cpuProfile: null,
+    });
+    expect(md).toContain("## Coverage / missing data");
+    expect(md).toContain("Build mode: **profile**");
+    expect(md).toContain("needs a Debug build");
+    expect(md).toContain("No CPU profile captured");
+  });
+
+  it("always prints image cache health when available", () => {
+    const md = buildAgentReportMarkdown({
+      ...input,
+      imageStats: {
+        available: true,
+        cache: { currentSizeBytes: 1024, currentSize: 3, maximumSizeBytes: 2048, live: 1, pending: 0 },
+        oversized: [],
+      },
+    });
+    expect(md).toContain("## Image cache");
+    expect(md).not.toContain("## Oversized images");
+  });
 });
 
 describe("buildAgentReportJson", () => {

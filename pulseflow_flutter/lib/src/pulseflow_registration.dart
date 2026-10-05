@@ -3,6 +3,7 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart' show kReleaseMode;
 
+import 'device/build_info.dart';
 import 'probes/error_probe.dart';
 import 'probes/frame_probe.dart';
 import 'probes/image_probe.dart';
@@ -72,7 +73,11 @@ void _registerExtensions() {
   registerPulseExtension('ext.pulseflow.getFrameStats', (
     Map<String, String> params,
   ) {
-    return FrameProbe.instance.snapshot(limit: intParam(params, 'limit', 120));
+    return <String, Object?>{
+      ...FrameProbe.instance.snapshot(limit: intParam(params, 'limit', 120)),
+      'buildMode': currentBuildMode(),
+      'probes': probeAvailability(),
+    };
   });
 
   // --- Widget rebuild probe ---

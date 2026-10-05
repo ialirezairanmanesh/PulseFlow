@@ -8,6 +8,7 @@ import type {
   NetworkRequest,
   OversizedImage,
   PerformanceProblem,
+  ProbeAvailability,
   RebuildCauseRoot,
   SessionBaseline,
 } from "@/lib/types";
@@ -35,6 +36,7 @@ export interface AgentReportInput {
   hot?: HotWidgetsPayload | null;
   stats?: SessionStats | null;
   baselines?: SessionBaseline[];
+  buildInfo?: { buildMode: string; probes: ProbeAvailability } | null;
 }
 
 /** Instruction header the dashboard prepends so an agent knows what to do. */
@@ -56,6 +58,52 @@ const MAX = {
 
 function slowHttp(network: NetworkRequest[]): NetworkRequest[] {
   return [...network].sort((a, b) => b.latencyMs - a.latencyMs).slice(0, MAX.http);
+}
+
+/**
+ * Explains what this session can and cannot show, so an agent does not misread
+ * empty sections as "no problems".
+ */
+export function buildCoverageLines(input: AgentReportInput): string[] {
+  const lines: string[] = [];
+  const mode = input.buildInfo?.buildMode;
+  const probes = input.buildInfo?.probes ?? {};
+  if (mode) lines.push(`- Build mode: **${mode}**`);
+  if (probes.rebuildProbe === false) {
+    lines.push(
+      "- Widget rebuild data unavailable: rebuild tracking needs a Debug build (Flutter's " +
+        "`debugOnRebuildDirtyWidget` is assert-only). Use Debug to find rebuilds, Profile for " +
+        "accurate frame/CPU cost.",
+    );
+  }
+  if (probes.sourceLocations === false) {
+    lines.push("- Source locations (`file:line`) unavailable: widget-creation tracking is Debug-only.");
+  }
+  if (probes.leaks === false) {
+    lines.push("- Leak report unavailable in this build mode.");
+  }
+  if (!input.cpuProfile) {
+    lines.push("- No CPU profile captured — record 3–5 s on `/cpu` while reproducing jank to get function hotspots.");
+  }
+  if (!input.memoryDiff?.grew?.length) {
+    lines.push("- No memory diff — capture two snapshots and diff on `/memory`.");
+  }
+  if (!input.rebuildRoots?.length && probes.rebuildProbe !== false) {
+    lines.push("- No rebuild roots in the window — interact with the UI to surface rebuilds.");
+  }
+  if (!input.errors?.length) {
+    lines.push("- No runtime errors captured in this session.");
+  }
+  if (input.imageStats?.available && input.imageStats.oversized.length === 0) {
+    lines.push("- Image cache healthy: no oversized decodes detected.");
+  }
+  if (!input.imageStats) {
+    lines.push("- No image data captured (needs a debug/profile build that paints images).");
+  }
+  if (slowHttp(input.network ?? []).length === 0) {
+    lines.push("- No slow HTTP samples.");
+  }
+  return lines;
 }
 
 export function buildAgentReportJson(input: AgentReportInput) {
@@ -104,6 +152,13 @@ export function buildAgentReportMarkdown(input: AgentReportInput): string {
   }
   lines.push("");
 
+  const coverage = buildCoverageLines(input);
+  if (coverage.length) {
+    lines.push("## Coverage / missing data", "");
+    lines.push(...coverage);
+    lines.push("");
+  }
+
   lines.push("## Problems (ranked)", "");
   if (!data.problems.length) {
     lines.push("_No ranked problems in this session._", "");
@@ -136,6 +191,18 @@ export function buildAgentReportMarkdown(input: AgentReportInput): string {
       );
       if (e.top[0]) lines.push(`  - ${e.top[0]}`);
     }
+    lines.push("");
+  }
+
+  if (data.images?.available) {
+    lines.push("## Image cache", "");
+    lines.push(
+      `- ${formatBytes(data.images.cache.currentSizeBytes)} / ${formatBytes(
+        data.images.cache.maximumSizeBytes,
+      )} · ${data.images.cache.currentSize} entries · ${data.images.cache.live} live · ${
+        data.images.cache.pending
+      } pending`,
+    );
     lines.push("");
   }
 

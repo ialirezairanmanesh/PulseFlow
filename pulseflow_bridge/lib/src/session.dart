@@ -285,6 +285,8 @@ class BridgeSession {
     _caps = defaultCaps();
     _cpuProfileCache = null;
     _lastCpuRaw = null;
+    _buildMode = null;
+    _probeAvailability = null;
     _cpuRecordOriginMicros = null;
     _cpuRecordStartedAt = null;
     _cpuRecording = false;
@@ -581,11 +583,26 @@ class BridgeSession {
       final double? budget = (data['budgetMs'] as num?)?.toDouble();
       if (rate != null && rate > 0) _refreshRate = rate;
       if (budget != null && budget > 0) _budgetMs = budget;
+      final String? mode = data['buildMode'] as String?;
+      if (mode != null) _buildMode = mode;
+      final Object? probes = data['probes'];
+      if (probes is Map) {
+        _probeAvailability = probes.map(
+          (Object? k, Object? v) => MapEntry<String, dynamic>('$k', v == true),
+        );
+      }
+      _send(<String, Object?>{
+        'type': 'buildInfo',
+        'buildMode': _buildMode ?? 'unknown',
+        'probes': _probeAvailability ?? <String, Object?>{},
+      });
       _reportedFrames = true;
     } catch (_) {}
   }
 
   bool _reportedFrames = false;
+  String? _buildMode;
+  Map<String, dynamic>? _probeAvailability;
 
   // ---------------------------------------------------------------------------
   // Polling
@@ -1691,6 +1708,17 @@ class BridgeSession {
     _sendMockExtension();
     _send(<String, Object?>{'type': 'scenarioStatus', 'scenarios': mockScenarios, 'running': null, 'message': 'Demo scenarios ready'});
     _send(<String, Object?>{'type': 'network', 'available': true, 'message': 'Mock network profile enabled'});
+    _send(<String, Object?>{
+      'type': 'buildInfo',
+      'buildMode': 'debug',
+      'probes': <String, bool>{
+        'rebuildProbe': true,
+        'sourceLocations': true,
+        'errors': true,
+        'images': true,
+        'leaks': true,
+      },
+    });
     _emitMockHotWidgets();
     _emitMockRebuildCauses();
     _emitMockErrors();

@@ -199,3 +199,12 @@ sharing (stacks are emitted root-first). The **Leaks** tab on `/memory` reports 
   oversized decodes (missing `cacheWidth`/`cacheHeight`), using `debugOnPaintImage`.
 - **Editor links**: source locations are clickable (`vscode://file/...:line`) in the Widgets table
   and Problems list when the widget inspector reports an absolute path (debug/profile).
+
+## Build mode & coverage
+
+The package reports the current build mode and which probes can run (`buildInfo`). Rebuild tracking
+and source locations rely on debug-only framework hooks (`debugOnRebuildDirtyWidget`,
+`--track-widget-creation`), so they are **unavailable in profile/release** — the dashboard shows a
+banner and the agent report's "Coverage / missing data" section explains the gap. Use **Debug** to
+find *what* to fix (rebuild causes, sources, overflow) and **Profile** to measure the real cost
+(frame timings, CPU). Frame timing, CPU profiling, errors, and image data work in profile.

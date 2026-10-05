@@ -12,6 +12,7 @@
 /// ```
 library;
 
+export 'src/device/build_info.dart';
 export 'src/device/display_info.dart';
 export 'src/probes/error_probe.dart';
 export 'src/probes/frame_probe.dart';

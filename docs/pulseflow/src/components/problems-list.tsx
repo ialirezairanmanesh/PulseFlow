@@ -36,6 +36,7 @@ export function ProblemsList() {
     scenarioRunning,
     rebuildCauses,
     appErrors,
+    buildInfo,
   } = usePulse();
 
   const input = probeFrozen && problemsSnapshot
@@ -133,6 +134,14 @@ export function ProblemsList() {
         <p className="rounded-md border border-amber-400/20 bg-amber-400/10 px-3 py-3 text-sm text-amber-100">
           {hotMessage ??
             "Widget probe extension not active — add examples/pulseflow_extension.dart to the app"}
+        </p>
+      )}
+
+      {buildInfo && buildInfo.probes.rebuildProbe === false && (
+        <p className="rounded-md border border-sky-400/20 bg-sky-500/10 px-3 py-2 text-sm text-sky-100">
+          {buildInfo.buildMode} build: widget rebuild causes and source locations need a{" "}
+          <span className="text-sky-50">Debug</span> build (Flutter&apos;s rebuild hook is
+          assert-only). Frame timing, CPU, errors, and image data are still captured.
         </p>
       )}
 

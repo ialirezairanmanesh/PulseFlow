@@ -33,6 +33,7 @@ import type {
   MetricPoint,
   NetworkRequest,
   OversizedImage,
+  ProbeAvailability,
   RebuildCauseRoot,
   RetainingPathNode,
   ScenarioInfo,
@@ -53,6 +54,11 @@ export interface ImageStatsState {
   available: boolean;
   cache: ImageCacheStats;
   oversized: OversizedImage[];
+}
+
+export interface BuildInfoState {
+  buildMode: string;
+  probes: ProbeAvailability;
 }
 
 const MAX_POINTS = 60;
@@ -128,6 +134,7 @@ type PulseContextValue = {
   rebuildCauses: RebuildCausesState | null;
   appErrors: ErrorEntry[];
   images: ImageStatsState | null;
+  buildInfo: BuildInfoState | null;
   baselines: SessionBaseline[];
   connect: (overrideUrl?: string) => void;
   disconnect: () => void;
@@ -201,6 +208,7 @@ export function PulseProvider({ children }: { children: ReactNode }) {
   const [rebuildCauses, setRebuildCauses] = useState<RebuildCausesState | null>(null);
   const [appErrors, setAppErrors] = useState<ErrorEntry[]>([]);
   const [images, setImages] = useState<ImageStatsState | null>(null);
+  const [buildInfo, setBuildInfo] = useState<BuildInfoState | null>(null);
   const [baselines, setBaselines] = useState<SessionBaseline[]>([]);
 
   const clientRef = useRef<PulseBridgeClient | null>(null);
@@ -286,6 +294,7 @@ export function PulseProvider({ children }: { children: ReactNode }) {
     setRebuildCauses(null);
     setAppErrors([]);
     setImages(null);
+    setBuildInfo(null);
     setBaselines([]);
   }, []);
 
@@ -455,6 +464,9 @@ export function PulseProvider({ children }: { children: ReactNode }) {
               cache: msg.cache,
               oversized: msg.oversized ?? [],
             });
+            break;
+          case "buildInfo":
+            setBuildInfo({ buildMode: msg.buildMode, probes: msg.probes ?? {} });
             break;
         }
       },
@@ -751,6 +763,7 @@ export function PulseProvider({ children }: { children: ReactNode }) {
       rebuildCauses,
       appErrors,
       images,
+      buildInfo,
       baselines,
       connect,
       disconnect,
@@ -817,6 +830,7 @@ export function PulseProvider({ children }: { children: ReactNode }) {
       rebuildCauses,
       appErrors,
       images,
+      buildInfo,
       baselines,
       connect,
       disconnect,

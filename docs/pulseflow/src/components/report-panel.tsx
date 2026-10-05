@@ -31,6 +31,7 @@ export function ReportPanel() {
     rebuildCauses,
     appErrors,
     images,
+    buildInfo,
     baselines,
   } = usePulse();
 
@@ -165,6 +166,7 @@ export function ReportPanel() {
       hot,
       stats,
       baselines,
+      buildInfo,
     };
   };
 
