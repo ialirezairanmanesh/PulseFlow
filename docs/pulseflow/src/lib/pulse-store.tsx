@@ -21,6 +21,8 @@ import type {
   CapabilityMap,
   ConnectionStatus,
   CpuProfileSummary,
+  DebugOptionId,
+  DebugOptionState,
   DiscoveredApp,
   ErrorEntry,
   ExtensionInfo,
@@ -136,6 +138,8 @@ type PulseContextValue = {
   images: ImageStatsState | null;
   buildInfo: BuildInfoState | null;
   baselines: SessionBaseline[];
+  debugOptions: DebugOptionState[];
+  debugOptionsMessage?: string;
   connect: (overrideUrl?: string) => void;
   disconnect: () => void;
   mock: () => void;
@@ -158,6 +162,8 @@ type PulseContextValue = {
     action: "report" | "start" | "stop" | "reset",
     opts?: { threshold?: number; limit?: number },
   ) => void;
+  setDebugOption: (id: DebugOptionId, enabled: boolean) => void;
+  refreshDebugOptions: () => void;
   captureBaseline: (label: string) => void;
   clearBaselines: () => void;
 };
@@ -210,6 +216,8 @@ export function PulseProvider({ children }: { children: ReactNode }) {
   const [images, setImages] = useState<ImageStatsState | null>(null);
   const [buildInfo, setBuildInfo] = useState<BuildInfoState | null>(null);
   const [baselines, setBaselines] = useState<SessionBaseline[]>([]);
+  const [debugOptions, setDebugOptions] = useState<DebugOptionState[]>([]);
+  const [debugOptionsMessage, setDebugOptionsMessage] = useState<string>();
 
   const clientRef = useRef<PulseBridgeClient | null>(null);
   const probeFrozenRef = useRef(false);
@@ -296,6 +304,8 @@ export function PulseProvider({ children }: { children: ReactNode }) {
     setImages(null);
     setBuildInfo(null);
     setBaselines([]);
+    setDebugOptions([]);
+    setDebugOptionsMessage(undefined);
   }, []);
 
   const applyHot = useCallback((normalized: HotWidgetsPayload) => {
@@ -401,6 +411,14 @@ export function PulseProvider({ children }: { children: ReactNode }) {
             break;
           case "capabilities":
             setCapabilities(msg.caps);
+            if (msg.caps.cpuSamples === false) {
+              setCpuMessage(
+                typeof msg.cpuProbeError === "string" && msg.cpuProbeError
+                  ? `CPU probe failed: ${msg.cpuProbeError}`
+                  : msg.message ||
+                      "getCpuSamples is not available on this VM. Run the app in profile mode with the CPU profiler enabled.",
+              );
+            }
             break;
           case "cpuProfile":
             setCpuRecording(Boolean(msg.recording));
@@ -467,6 +485,10 @@ export function PulseProvider({ children }: { children: ReactNode }) {
             break;
           case "buildInfo":
             setBuildInfo({ buildMode: msg.buildMode, probes: msg.probes ?? {} });
+            break;
+          case "debugOptions":
+            setDebugOptions(msg.options ?? []);
+            if (msg.message) setDebugOptionsMessage(msg.message);
             break;
         }
       },
@@ -691,6 +713,19 @@ export function PulseProvider({ children }: { children: ReactNode }) {
     [send],
   );
 
+  const setDebugOption = useCallback(
+    (id: DebugOptionId, enabled: boolean) =>
+      send(() =>
+        clientRef.current?.send({ type: "debugOptions", action: "set", id, enabled }),
+      ),
+    [send],
+  );
+
+  const refreshDebugOptions = useCallback(
+    () => send(() => clientRef.current?.send({ type: "debugOptions", action: "get" })),
+    [send],
+  );
+
   const captureBaseline = useCallback((label: string) => {
     const problemCount = buildProblems({
       hot: hotRef.current,
@@ -765,6 +800,8 @@ export function PulseProvider({ children }: { children: ReactNode }) {
       images,
       buildInfo,
       baselines,
+      debugOptions,
+      debugOptionsMessage,
       connect,
       disconnect,
       mock,
@@ -784,6 +821,8 @@ export function PulseProvider({ children }: { children: ReactNode }) {
       exportTimeline,
       networkControl,
       leakControl,
+      setDebugOption,
+      refreshDebugOptions,
       captureBaseline,
       clearBaselines,
     }),
@@ -832,6 +871,8 @@ export function PulseProvider({ children }: { children: ReactNode }) {
       images,
       buildInfo,
       baselines,
+      debugOptions,
+      debugOptionsMessage,
       connect,
       disconnect,
       mock,
@@ -851,6 +892,8 @@ export function PulseProvider({ children }: { children: ReactNode }) {
       exportTimeline,
       networkControl,
       leakControl,
+      setDebugOption,
+      refreshDebugOptions,
       captureBaseline,
       clearBaselines,
     ],

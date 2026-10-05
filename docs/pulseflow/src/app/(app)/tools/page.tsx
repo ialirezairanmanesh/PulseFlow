@@ -1,5 +1,6 @@
 "use client";
 
+import { DebugOptionsPanel } from "@/components/debug-options";
 import { LabControls } from "@/components/lab-controls";
 import { usePulse } from "@/lib/pulse-store";
 
@@ -18,6 +19,10 @@ export default function ToolsPage() {
     stopScenario,
     captureBaseline,
     clearBaselines,
+    debugOptions,
+    debugOptionsMessage,
+    setDebugOption,
+    refreshDebugOptions,
   } = usePulse();
 
   return (
@@ -27,9 +32,16 @@ export default function ToolsPage() {
           Lab
         </h2>
         <p className="mt-1 text-sm text-[var(--ink-muted)]">
-          Stress controls, repeatable scenarios, and before/after baselines
+          Flutter debug overlays, stress controls, scenarios, and baselines
         </p>
       </div>
+      <DebugOptionsPanel
+        options={debugOptions}
+        disabled={!connected}
+        message={debugOptionsMessage}
+        onToggle={setDebugOption}
+        onRefresh={refreshDebugOptions}
+      />
       <LabControls
         extension={extension}
         disabled={!connected}

@@ -53,6 +53,47 @@ const List<Map<String, Object?>> mockScenarios = <Map<String, Object?>>[
   {'id': 'networkBurst', 'label': 'Network burst', 'description': 'Stubbed unless the app registers a network hook'},
 ];
 
+/// Flutter DevTools-style debug toggles (ext.flutter.*).
+const List<Map<String, String>> _debugOptionDefs = <Map<String, String>>[
+  {
+    'id': 'performanceOverlay',
+    'method': 'ext.flutter.showPerformanceOverlay',
+    'kind': 'bool',
+  },
+  {
+    'id': 'debugPaint',
+    'method': 'ext.flutter.debugPaint',
+    'kind': 'bool',
+  },
+  {
+    'id': 'debugPaintBaselines',
+    'method': 'ext.flutter.debugPaintBaselinesEnabled',
+    'kind': 'bool',
+  },
+  {
+    'id': 'repaintRainbow',
+    'method': 'ext.flutter.repaintRainbow',
+    'kind': 'bool',
+  },
+  {
+    'id': 'invertOversizedImages',
+    'method': 'ext.flutter.invertOversizedImages',
+    'kind': 'bool',
+  },
+  {
+    'id': 'debugBanner',
+    'method': 'ext.flutter.debugAllowBanner',
+    'kind': 'bool',
+  },
+  {
+    'id': 'slowAnimations',
+    'method': 'ext.flutter.timeDilation',
+    'kind': 'timeDilation',
+  },
+];
+
+const double _slowAnimationDilation = 5.0;
+
 const List<Map<String, Object?>> _mockWidgetDefs = <Map<String, Object?>>[
   {'name': 'InvoiceCard', 'route': '/invoices', 'keyLabel': 'ValueKey(row)', 'base': 36},
   {'name': 'InvoiceListTile', 'route': '/invoices', 'base': 28},
@@ -104,6 +145,9 @@ class BridgeSession {
   final Set<String> _seenHttpIds = <String>{};
   String? _scenarioRunning;
   final List<Map<String, Object?>> _timelineMarkers = <Map<String, Object?>>[];
+  final Map<String, bool> _mockDebugOptions = <String, bool>{
+    for (final Map<String, String> d in _debugOptionDefs) d['id']!: false,
+  };
 
   bool _closed = false;
   double _refreshRate = 60;
@@ -173,6 +217,13 @@ class BridgeSession {
             (msg['limit'] as num?)?.toInt(),
           );
           break;
+        case 'debugOptions':
+          await _handleDebugOptions(
+            '${msg['action']}',
+            msg['id'] as String?,
+            msg['enabled'] is bool ? msg['enabled'] as bool : null,
+          );
+          break;
         default:
           _send(<String, Object?>{'type': 'error', 'message': 'Unknown bridge command'});
       }
@@ -238,6 +289,7 @@ class BridgeSession {
         'isolateName': isolateName,
       });
       await _sendFrameStats();
+      unawaited(_handleDebugOptions('get', null, null));
       if (_caps['scenarios'] == true) {
         unawaited(_handleScenario('list', null, null));
       }
@@ -413,12 +465,14 @@ class BridgeSession {
         'scenarios': mockScenarios,
         'running': _scenarioRunning,
       });
+      _emitMockDebugOptions();
       return;
     }
     if (_mode == 'live') {
       await _refreshExtensions();
       await _probeCapabilities();
       if (_caps['scenarios'] == true) unawaited(_handleScenario('list', null, null));
+      unawaited(_handleDebugOptions('get', null, null));
       return;
     }
     _send(<String, Object?>{
@@ -517,24 +571,37 @@ class BridgeSession {
       return;
     }
 
+    // Enable sampling before CPU probes. getFlag is not a real VM RPC (only
+    // getFlagList / setFlag exist). Probe getCpuSamples alone first — parallel
+    // ADB probes can time out and falsely mark CPU unavailable on profile builds.
+    await _ensureProfiler();
+
+    final String? cpuProbeError = await _probeCpuSamples(isolateId);
+    final bool cpuSamples = cpuProbeError == null;
+
     Future<bool> probe(String method, Map<String, dynamic> args) async {
       try {
-        await _vm!.callServiceExtension(method, isolateId: isolateId, args: args)
-            .timeout(const Duration(milliseconds: 1200));
+        await _vm!
+            .callServiceExtension(method, isolateId: isolateId, args: args)
+            .timeout(const Duration(milliseconds: 2500));
         return true;
       } catch (error) {
         final String message = '$error';
-        if (RegExp('unknown method|not found|not available|MethodNotFound', caseSensitive: false)
+        if (RegExp(r'MethodNotFound|unknown method|method not found', caseSensitive: false)
             .hasMatch(message)) {
           return false;
         }
-        if (RegExp('timeout', caseSensitive: false).hasMatch(message)) return false;
+        if (RegExp('timeout', caseSensitive: false).hasMatch(message)) {
+          return false;
+        }
+        // Other errors (bad args, profiler previously disabled) still mean
+        // the method exists on this VM.
         return true;
       }
     }
 
+    final bool profilerFlag = await _profilerFlagAvailable();
     final List<bool> results = await Future.wait(<Future<bool>>[
-      probe('getCpuSamples', <String, dynamic>{'timeOriginMicros': 0, 'timeExtentMicros': 1}),
       probe('clearCpuSamples', <String, dynamic>{}),
       probe('getAllocationProfile', <String, dynamic>{}),
       probe('getRetainingPath', <String, dynamic>{'targetId': 'objects/0', 'limit': 1}),
@@ -542,27 +609,90 @@ class BridgeSession {
       _supportsPerfetto(),
       probe('getPerfettoCpuSamples', <String, dynamic>{'timeOriginMicros': 0, 'timeExtentMicros': 1}),
       probe('getVMTimelineMicros', <String, dynamic>{}),
-      probe('getFlag', <String, dynamic>{'name': 'profiler'}),
       probe('ext.dart.io.getSocketProfile', <String, dynamic>{}),
     ]);
 
     final Map<String, bool> caps = defaultCaps();
-    caps['cpuSamples'] = results[0];
-    caps['clearCpuSamples'] = results[1];
-    caps['allocationProfile'] = results[2];
-    caps['retainingPath'] = results[3];
-    caps['instances'] = results[4];
-    caps['perfettoTimeline'] = results[5];
-    caps['perfettoCpuSamples'] = results[6];
-    caps['vmTimelineMicros'] = results[7];
-    caps['profilerFlag'] = results[8];
+    caps['cpuSamples'] = cpuSamples;
+    caps['clearCpuSamples'] = results[0];
+    caps['allocationProfile'] = results[1];
+    caps['retainingPath'] = results[2];
+    caps['instances'] = results[3];
+    caps['perfettoTimeline'] = results[4];
+    caps['perfettoCpuSamples'] = results[5];
+    caps['vmTimelineMicros'] = results[6];
+    caps['profilerFlag'] = profilerFlag;
     caps['httpProfile'] = _httpProfileSupported != false;
-    caps['socketProfile'] = results[9];
+    caps['socketProfile'] = results[7];
     caps['pulseExtension'] = _extensionMethods.any((String m) => m.startsWith('ext.pulseflow.'));
     caps['scenarios'] = _extensionMethods.contains('ext.pulseflow.listScenarios');
     caps['widgetProbe'] = _extensionMethods.contains('ext.pulseflow.getHotWidgets');
     _caps = caps;
-    _send(<String, Object?>{'type': 'capabilities', 'caps': caps, 'message': 'VM/DDS capability probe complete'});
+    _send(<String, Object?>{
+      'type': 'capabilities',
+      'caps': caps,
+      'message': cpuSamples
+          ? 'VM/DDS capability probe complete'
+          : 'VM/DDS capability probe complete — CPU unavailable: $cpuProbeError',
+      if (cpuProbeError != null) 'cpuProbeError': cpuProbeError,
+    });
+  }
+
+  /// Returns `null` when getCpuSamples is usable, otherwise the failure reason.
+  Future<String?> _probeCpuSamples(String isolateId) async {
+    Future<String?> attempt() async {
+      try {
+        await _vm!
+            .getCpuSamples(isolateId, 0, 1)
+            .timeout(const Duration(seconds: 8));
+        return null;
+      } catch (error) {
+        final String message = '$error';
+        // Profiler disabled still means the RPC exists — enable and treat as OK.
+        if (RegExp('profiler', caseSensitive: false).hasMatch(message) &&
+            RegExp('disabled|not enabled|not responding', caseSensitive: false)
+                .hasMatch(message)) {
+          await _ensureProfiler();
+          try {
+            await _vm!
+                .getCpuSamples(isolateId, 0, 1)
+                .timeout(const Duration(seconds: 8));
+            return null;
+          } catch (retryError) {
+            final String retryMessage = '$retryError';
+            if (RegExp('profiler', caseSensitive: false).hasMatch(retryMessage)) {
+              // Method exists; recording path will call setFlag again.
+              return null;
+            }
+            return retryMessage;
+          }
+        }
+        if (RegExp(r'MethodNotFound|unknown method|method not found', caseSensitive: false)
+            .hasMatch(message)) {
+          return message;
+        }
+        if (RegExp('timeout', caseSensitive: false).hasMatch(message)) {
+          return 'timeout';
+        }
+        // Any other RPC/parse error ⇒ method is present.
+        return null;
+      }
+    }
+
+    final String? first = await attempt();
+    if (first == null || first != 'timeout') return first;
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+    await _ensureProfiler();
+    return attempt();
+  }
+
+  Future<bool> _profilerFlagAvailable() async {
+    try {
+      final vm.FlagList flags = await _vm!.getFlagList().timeout(const Duration(milliseconds: 2500));
+      return flags.flags?.any((vm.Flag f) => f.name == 'profiler') == true;
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<bool> _supportsPerfetto() async {
@@ -1091,8 +1221,14 @@ class BridgeSession {
 
   Future<void> _ensureProfiler() async {
     try {
-      final Map<String, dynamic>? flag = await _raw('getFlag', <String, dynamic>{'name': 'profiler'});
-      if ('${flag?['valueAsString']}' == 'true') return;
+      final vm.FlagList flags = await _vm!.getFlagList().timeout(const Duration(milliseconds: 2500));
+      final vm.Flag? profiler =
+          flags.flags?.where((vm.Flag f) => f.name == 'profiler').firstOrNull;
+      if (profiler?.valueAsString == 'true') return;
+    } catch (_) {
+      // Fall through and still try setFlag — getFlagList can lag on cold connect.
+    }
+    try {
       await _vm!.setFlag('profiler', 'true');
     } catch (_) {}
   }
@@ -1646,6 +1782,138 @@ class BridgeSession {
     }
   }
 
+  Future<void> _handleDebugOptions(String action, String? id, bool? enabled) async {
+    if (_mode == 'mock') {
+      if (action == 'set' && id != null && enabled != null && _mockDebugOptions.containsKey(id)) {
+        _mockDebugOptions[id] = enabled;
+      }
+      _emitMockDebugOptions(
+        message: action == 'set' && id != null
+            ? 'Demo: $id ${enabled == true ? 'on' : 'off'} (no device overlay)'
+            : 'Demo debug options — toggles are local only',
+      );
+      return;
+    }
+    if (_mode != 'live' || _isolateId == null) {
+      _send(<String, Object?>{
+        'type': 'debugOptions',
+        'options': <Object?>[],
+        'message': 'Connect to a Flutter app to use debug overlays',
+      });
+      return;
+    }
+
+    if (action == 'set') {
+      if (id == null || enabled == null) {
+        _send(<String, Object?>{'type': 'error', 'message': 'debugOptions set requires id and enabled'});
+        return;
+      }
+      Map<String, String>? def;
+      for (final Map<String, String> d in _debugOptionDefs) {
+        if (d['id'] == id) {
+          def = d;
+          break;
+        }
+      }
+      if (def == null) {
+        _send(<String, Object?>{'type': 'error', 'message': 'Unknown debug option: $id'});
+        return;
+      }
+      final String method = def['method']!;
+      if (!_extensionMethods.contains(method)) {
+        _send(<String, Object?>{
+          'type': 'error',
+          'message': '$method is not available on this isolate (needs a debug/profile Flutter app)',
+        });
+        await _readLiveDebugOptions(message: 'Some Flutter debug extensions are unavailable');
+        return;
+      }
+      try {
+        if (def['kind'] == 'timeDilation') {
+          await _callExtension(
+            method,
+            args: <String, dynamic>{
+              'timeDilation': enabled ? '$_slowAnimationDilation' : '1.0',
+            },
+          );
+        } else {
+          await _callExtension(
+            method,
+            args: <String, dynamic>{'enabled': '$enabled'},
+          );
+        }
+      } catch (error) {
+        _send(<String, Object?>{'type': 'error', 'message': '$error'});
+      }
+      await _readLiveDebugOptions(
+        message: '${def['id']} ${enabled ? 'enabled' : 'disabled'}',
+      );
+      return;
+    }
+
+    await _readLiveDebugOptions();
+  }
+
+  Future<void> _readLiveDebugOptions({String? message}) async {
+    final List<Map<String, Object?>> options = <Map<String, Object?>>[];
+    for (final Map<String, String> def in _debugOptionDefs) {
+      final String method = def['method']!;
+      final bool available = _extensionMethods.contains(method);
+      bool enabled = false;
+      if (available) {
+        try {
+          final Map<String, dynamic>? result = await _callExtension(method);
+          if (def['kind'] == 'timeDilation') {
+            final double dilation =
+                double.tryParse('${result?['timeDilation'] ?? result?['value'] ?? 1}') ?? 1.0;
+            enabled = dilation > 1.0;
+          } else {
+            enabled = _parseBoolFlag(result?['enabled']);
+          }
+        } catch (_) {
+          options.add(<String, Object?>{
+            'id': def['id'],
+            'enabled': false,
+            'available': false,
+          });
+          continue;
+        }
+      }
+      options.add(<String, Object?>{
+        'id': def['id'],
+        'enabled': enabled,
+        'available': available,
+      });
+    }
+    _send(<String, Object?>{
+      'type': 'debugOptions',
+      'options': options,
+      if (message != null) 'message': message,
+    });
+  }
+
+  void _emitMockDebugOptions({String? message}) {
+    _send(<String, Object?>{
+      'type': 'debugOptions',
+      'options': _debugOptionDefs
+          .map(
+            (Map<String, String> d) => <String, Object?>{
+              'id': d['id'],
+              'enabled': _mockDebugOptions[d['id']!] ?? false,
+              'available': true,
+            },
+          )
+          .toList(),
+      'message': message ?? 'Demo debug options — toggles are local only',
+    });
+  }
+
+  bool _parseBoolFlag(Object? value) {
+    if (value is bool) return value;
+    if (value is String) return value.toLowerCase() == 'true';
+    return false;
+  }
+
   Future<void> _runStress(String action, Map<String, dynamic>? params) async {
     if (_mode == 'mock') {
       _mockStress(action);
@@ -1719,6 +1987,10 @@ class BridgeSession {
         'leaks': true,
       },
     });
+    for (final String id in _mockDebugOptions.keys) {
+      _mockDebugOptions[id] = false;
+    }
+    _emitMockDebugOptions();
     _emitMockHotWidgets();
     _emitMockRebuildCauses();
     _emitMockErrors();

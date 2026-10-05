@@ -2,18 +2,12 @@
 
 import Link from "next/link";
 import { Snowflake, CircleDot, FileDown } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { FixPlan } from "@/components/fix-plan";
+import { HealthVerdict } from "@/components/health-verdict";
 import { buildProblems } from "@/lib/problems";
-import { toEditorUrl } from "@/lib/editor-link";
+import { computeVerdict } from "@/lib/verdict";
 import { usePulse } from "@/lib/pulse-store";
-import type { PerformanceProblem } from "@/lib/types";
-
-function severityClass(severity: PerformanceProblem["severity"]) {
-  if (severity === "high") return "border-rose-400/30 bg-rose-500/10 text-rose-100";
-  if (severity === "medium") return "border-amber-400/30 bg-amber-500/10 text-amber-100";
-  return "border-white/10 bg-white/5 text-[var(--ink-muted)]";
-}
 
 export function ProblemsList() {
   const {
@@ -71,8 +65,22 @@ export function ProblemsList() {
         errors: appErrors,
       });
 
+  const verdict = isRecording
+    ? null
+    : computeVerdict({
+        points,
+        problems,
+        budgetMs: input.latest?.buildBudgetMs,
+      });
+
+  const hasDetails =
+    (input.hot?.screens?.length ?? 0) > 0 ||
+    (rebuildCauses?.roots.length ?? 0) > 0 ||
+    appErrors.length > 0;
+
   return (
     <div className="space-y-4">
+      {verdict && <HealthVerdict verdict={verdict} />}
       <section className="flex flex-col gap-3 rounded-xl border border-white/10 bg-black/20 px-4 py-4 backdrop-blur-sm sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h2 className="font-[family-name:var(--font-display)] text-2xl tracking-tight text-[var(--ink)]">
@@ -159,144 +167,100 @@ export function ProblemsList() {
               "Looking good — scroll or navigate the app to surface hidden rebuild pressure."}
         </div>
       ) : (
-        <ul className="space-y-3">
-          {problems.map((p) => (
-            <li
-              key={p.id}
-              className={`rounded-xl border px-4 py-3 ${severityClass(p.severity)}`}
-            >
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge
-                      variant={p.severity === "high" ? "error" : "idle"}
+        <FixPlan problems={problems} budgetMs={input.latest?.buildBudgetMs ?? 16.67} />
+      )}
+
+      {!isRecording && hasDetails && (
+        <details className="rounded-xl border border-white/10 bg-black/20 px-4 py-3 backdrop-blur-sm">
+          <summary className="cursor-pointer select-none text-sm text-[var(--ink-muted)]">
+            Show details — screens, rebuild roots, errors
+          </summary>
+          <div className="mt-3 space-y-3">
+            {input.hot?.screens && input.hot.screens.length > 0 && (
+              <section className="rounded-xl border border-white/10 bg-black/20 px-4 py-4 backdrop-blur-sm">
+                <h3 className="font-[family-name:var(--font-display)] text-lg tracking-tight text-[var(--ink)]">
+                  Screens (window)
+                </h3>
+                <p className="mb-3 text-sm text-[var(--ink-muted)]">
+                  Rebuild pressure by route in the last{" "}
+                  {((input.hot.windowMs || 10000) / 1000).toFixed(0)}s
+                </p>
+                <div className="space-y-2">
+                  {input.hot.screens.slice(0, 6).map((s) => (
+                    <div
+                      key={s.route}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-white/8 bg-white/4 px-3 py-2 text-sm"
                     >
-                      {p.severity}
-                    </Badge>
-                    <span className="text-[10px] uppercase tracking-[0.14em] opacity-70">
-                      {p.kind.replace(/_/g, " ")}
-                    </span>
-                  </div>
-                  <h3 className="mt-1 font-[family-name:var(--font-display)] text-lg tracking-tight">
-                    {p.title}
-                  </h3>
+                      <span className="font-mono text-[var(--ink)]">{s.route}</span>
+                      <span className="text-[var(--ink-muted)]">
+                        {s.ratePerSec.toFixed(1)}/s · {s.share.toFixed(1)}% ·{" "}
+                        {s.rebuildsWindow} rebuilds
+                      </span>
+                    </div>
+                  ))}
                 </div>
-                {(p.ratePerSec != null || p.share != null) && (
-                  <div className="text-right text-sm opacity-90">
-                    {p.ratePerSec != null && <div>{p.ratePerSec.toFixed(1)}/s</div>}
-                    {p.share != null && <div>{p.share.toFixed(1)}% share</div>}
-                  </div>
-                )}
-              </div>
-              <p className="mt-1 text-sm opacity-90">{p.detail}</p>
-              <p className="mt-2 text-sm opacity-80">
-                <span className="text-[var(--accent)]">Fix: </span>
-                {p.action}
-              </p>
-              {(p.route || p.widget) && (
-                <p className="mt-2 font-mono text-[12px] opacity-70">
-                  {p.route ? `${p.route}` : ""}
-                  {p.route && p.widget ? " · " : ""}
-                  {p.widget ?? ""}
+              </section>
+            )}
+
+            {rebuildCauses && rebuildCauses.roots.length > 0 && (
+              <section className="rounded-xl border border-white/10 bg-black/20 px-4 py-4 backdrop-blur-sm">
+                <h3 className="font-[family-name:var(--font-display)] text-lg tracking-tight text-[var(--ink)]">
+                  Rebuild roots
+                </h3>
+                <p className="mb-3 text-sm text-[var(--ink-muted)]">
+                  Widgets that rebuilt without a rebuilt ancestor — the likely trigger for the
+                  rebuilds
                 </p>
-              )}
-              {p.sourceUri && toEditorUrl(p.sourceUri, p.sourceLine) && (
-                <p className="mt-1 font-mono text-[11px]">
-                  <a
-                    className="underline decoration-dotted opacity-80 hover:opacity-100"
-                    href={toEditorUrl(p.sourceUri, p.sourceLine)!}
-                  >
-                    {`${p.sourceUri.split("/").pop()}${p.sourceLine ? `:${p.sourceLine}` : ""}`}
-                  </a>
-                </p>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {!isRecording && input.hot?.screens && input.hot.screens.length > 0 && (
-        <section className="rounded-xl border border-white/10 bg-black/20 px-4 py-4 backdrop-blur-sm">
-          <h3 className="font-[family-name:var(--font-display)] text-lg tracking-tight text-[var(--ink)]">
-            Screens (window)
-          </h3>
-          <p className="mb-3 text-sm text-[var(--ink-muted)]">
-            Rebuild pressure by route in the last{" "}
-            {((input.hot.windowMs || 10000) / 1000).toFixed(0)}s
-          </p>
-          <div className="space-y-2">
-            {input.hot.screens.slice(0, 6).map((s) => (
-              <div
-                key={s.route}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-white/8 bg-white/4 px-3 py-2 text-sm"
-              >
-                <span className="font-mono text-[var(--ink)]">{s.route}</span>
-                <span className="text-[var(--ink-muted)]">
-                  {s.ratePerSec.toFixed(1)}/s · {s.share.toFixed(1)}% ·{" "}
-                  {s.rebuildsWindow} rebuilds
-                </span>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {!isRecording && rebuildCauses && rebuildCauses.roots.length > 0 && (
-        <section className="rounded-xl border border-white/10 bg-black/20 px-4 py-4 backdrop-blur-sm">
-          <h3 className="font-[family-name:var(--font-display)] text-lg tracking-tight text-[var(--ink)]">
-            Rebuild roots
-          </h3>
-          <p className="mb-3 text-sm text-[var(--ink-muted)]">
-            Widgets that rebuilt without a rebuilt ancestor — the likely trigger for the rebuilds
-            below
-          </p>
-          <div className="space-y-2">
-            {rebuildCauses.roots.slice(0, 6).map((r) => (
-              <div
-                key={r.id}
-                className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-white/8 bg-white/5 px-3 py-2 text-sm"
-              >
-                <span className="font-mono text-[var(--ink)]">{r.widget}</span>
-                <span className="text-[var(--ink-muted)]">
-                  {r.ratePerSec.toFixed(1)}/s · {r.rebuilds} rebuilds · {r.children} children ·{" "}
-                  {r.route}
-                </span>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {!isRecording && appErrors.length > 0 && (
-        <section className="rounded-xl border border-white/10 bg-black/20 px-4 py-4 backdrop-blur-sm">
-          <h3 className="font-[family-name:var(--font-display)] text-lg tracking-tight text-[var(--ink)]">
-            Errors
-          </h3>
-          <p className="mb-3 text-sm text-[var(--ink-muted)]">
-            Overflow, assertions, and exceptions captured at runtime
-          </p>
-          <ul className="space-y-2 text-sm">
-            {appErrors.slice(0, 8).map((e) => (
-              <li
-                key={`${e.kind}-${e.signature}`}
-                className="rounded-md border border-white/8 bg-white/5 px-3 py-2"
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="text-[var(--ink)]">{e.signature}</span>
-                  <span className="text-[var(--ink-muted)]">
-                    {e.count}× · {e.kind}
-                    {e.route ? ` · ${e.route}` : ""}
-                  </span>
+                <div className="space-y-2">
+                  {rebuildCauses.roots.slice(0, 6).map((r) => (
+                    <div
+                      key={r.id}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-white/8 bg-white/5 px-3 py-2 text-sm"
+                    >
+                      <span className="font-mono text-[var(--ink)]">{r.widget}</span>
+                      <span className="text-[var(--ink-muted)]">
+                        {r.ratePerSec.toFixed(1)}/s · {r.rebuilds} rebuilds · {r.children} children ·{" "}
+                        {r.route}
+                      </span>
+                    </div>
+                  ))}
                 </div>
-                {e.top.length > 0 && (
-                  <div className="mt-1 font-mono text-[11px] text-[var(--ink-faint)]">
-                    {e.top[0]}
-                  </div>
-                )}
-              </li>
-            ))}
-          </ul>
-        </section>
+              </section>
+            )}
+
+            {appErrors.length > 0 && (
+              <section className="rounded-xl border border-white/10 bg-black/20 px-4 py-4 backdrop-blur-sm">
+                <h3 className="font-[family-name:var(--font-display)] text-lg tracking-tight text-[var(--ink)]">
+                  Errors
+                </h3>
+                <p className="mb-3 text-sm text-[var(--ink-muted)]">
+                  Overflow, assertions, and exceptions captured at runtime
+                </p>
+                <ul className="space-y-2 text-sm">
+                  {appErrors.slice(0, 8).map((e) => (
+                    <li
+                      key={`${e.kind}-${e.signature}`}
+                      className="rounded-md border border-white/8 bg-white/5 px-3 py-2"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-[var(--ink)]">{e.signature}</span>
+                        <span className="text-[var(--ink-muted)]">
+                          {e.count}× · {e.kind}
+                          {e.route ? ` · ${e.route}` : ""}
+                        </span>
+                      </div>
+                      {e.top.length > 0 && (
+                        <div className="mt-1 font-mono text-[11px] text-[var(--ink-faint)]">
+                          {e.top[0]}
+                        </div>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )}
+          </div>
+        </details>
       )}
     </div>
   );

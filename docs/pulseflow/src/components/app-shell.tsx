@@ -2,11 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useState } from "react";
 import { motion } from "framer-motion";
-import { Unplug } from "lucide-react";
+import { Sparkles, Unplug } from "lucide-react";
+import { AiDrawer } from "@/components/ai-drawer";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { statusVariant } from "@/lib/chart-utils";
+import { computeVerdict } from "@/lib/verdict";
 import { usePulse } from "@/lib/pulse-store";
 import { cn } from "@/lib/utils";
 
@@ -20,10 +23,12 @@ const NAV = [
   { href: "/tools", label: "Tools" },
   { href: "/report", label: "Report" },
   { href: "/history", label: "History" },
+  { href: "/ai", label: "AI" },
 ] as const;
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const [aiOpen, setAiOpen] = useState(false);
   const {
     status,
     mode,
@@ -36,6 +41,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   } = usePulse();
 
   const latest = points.at(-1);
+  const verdict = connected ? computeVerdict({ points, problems: [] }) : null;
+  const verdictTone = verdict
+    ? verdict.status === "good"
+      ? "border-teal-400/25 bg-teal-500/10 text-teal-200"
+      : verdict.status === "needs-work"
+        ? "border-amber-400/25 bg-amber-500/10 text-amber-200"
+        : "border-rose-400/25 bg-rose-500/10 text-rose-200"
+    : "";
+  const verdictLabel = verdict
+    ? verdict.status === "good"
+      ? "Good"
+      : verdict.status === "needs-work"
+        ? "Needs work"
+        : "Problems"
+    : "";
 
   return (
     <div className="relative min-h-screen overflow-hidden">
@@ -64,6 +84,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               {mode === "mock" && connected ? "demo mode" : status}
             </Badge>
             {!bridgeReady && <Badge variant="idle">bridge…</Badge>}
+            {connected && (
+              <Button size="sm" variant="outline" onClick={() => setAiOpen(true)}>
+                <Sparkles className="h-3.5 w-3.5" />
+                Ask AI
+              </Button>
+            )}
             {connected && (
               <Button size="sm" variant="danger" onClick={disconnect}>
                 <Unplug className="h-3.5 w-3.5" />
@@ -117,6 +143,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   label="Heap"
                   value={latest ? `${latest.heapMb.toFixed(1)} MB` : "—"}
                 />
+                {verdict && (
+                  <div
+                    className={cn(
+                      "min-w-[72px] rounded-md border px-2.5 py-1.5",
+                      verdictTone,
+                    )}
+                  >
+                    <div className="text-[10px] uppercase tracking-[0.14em] opacity-70">
+                      Health
+                    </div>
+                    <div className="font-[family-name:var(--font-display)] text-sm">
+                      {verdictLabel} · {verdict.score}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -126,6 +167,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <main className="relative z-10 mx-auto max-w-6xl px-5 py-6 pb-16 md:px-8">
         {children}
       </main>
+
+      <AiDrawer open={aiOpen} onClose={() => setAiOpen(false)} />
     </div>
   );
 }

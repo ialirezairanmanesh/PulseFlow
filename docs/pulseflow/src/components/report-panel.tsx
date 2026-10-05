@@ -9,7 +9,8 @@ import {
   buildSessionReportMarkdown,
   downloadText,
 } from "@/lib/session-report";
-import type { SessionStats } from "@/lib/session-history";
+import type { ComparisonRow, SessionStats } from "@/lib/session-history";
+import { pctChange, SESSION_STAT_LABELS, summarizeComparison } from "@/lib/session-history";
 import { usePulse } from "@/lib/pulse-store";
 
 export function ReportPanel() {
@@ -50,6 +51,19 @@ export function ReportPanel() {
 
   const before = baselines.find((b) => b.label === "before");
   const after = baselines.find((b) => b.label === "after");
+
+  const baselineRows: ComparisonRow[] =
+    before && after
+      ? SESSION_STAT_LABELS.map(([key, label]) => {
+          const b = before[key];
+          const a = after[key];
+          const delta = a - b;
+          return { key, label, before: b, after: a, delta, improved: delta < 0 };
+        })
+      : [];
+  const baselineSummary = baselineRows.length > 0 ? summarizeComparison(baselineRows) : null;
+  const formatBaselineValue = (key: keyof SessionStats, value: number) =>
+    key === "jankRatio" ? `${(value * 100).toFixed(0)}%` : `${value}`;
 
   const exportJson = () => {
     const data = buildSessionReportJson({
@@ -245,64 +259,66 @@ export function ReportPanel() {
         <h3 className="mb-3 font-[family-name:var(--font-display)] text-lg tracking-tight text-[var(--ink)]">
           Baseline compare
         </h3>
-        {!before && !after ? (
+        {!before || !after ? (
           <p className="text-sm text-[var(--ink-muted)]">
-            Capture before/after baselines on the Tools (Lab) page, then return here.
+            Capture both a before and an after baseline on the Tools (Lab) page, then return here.
           </p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[480px] text-left text-sm">
-              <thead className="text-[10px] uppercase tracking-[0.14em] text-[var(--ink-faint)]">
-                <tr>
-                  <th className="pb-2 font-normal">Metric</th>
-                  <th className="pb-2 font-normal">Before</th>
-                  <th className="pb-2 font-normal">After</th>
-                  <th className="pb-2 font-normal">Delta</th>
-                </tr>
-              </thead>
-              <tbody className="text-[var(--ink-muted)]">
-                {(
-                  [
-                    ["P95 build ms", "p95BuildMs"],
-                    ["P95 raster ms", "p95RasterMs"],
-                    ["P95 frame ms", "p95FrameMs"],
-                    ["Rebuild /s", "rebuildRate"],
-                    ["Heap MB", "heapMb"],
-                    ["Jank ratio", "jankRatio"],
-                  ] as const
-                ).map(([label, key]) => {
-                  const b = before?.[key] ?? null;
-                  const a = after?.[key] ?? null;
-                  const delta =
-                    b != null && a != null
-                      ? key === "jankRatio"
-                        ? `${(((a as number) - (b as number)) * 100).toFixed(0)} pts`
-                        : Number((a as number) - (b as number)).toFixed(2)
-                      : "—";
-                  return (
-                    <tr key={key} className="border-t border-white/5">
-                      <td className="py-2 text-[var(--ink)]">{label}</td>
+          <>
+            {baselineSummary && (
+              <p
+                className={`mb-3 rounded-md border px-3 py-2 text-sm ${
+                  baselineSummary.regressed.length > 0
+                    ? "border-rose-400/25 bg-rose-500/10 text-rose-100"
+                    : baselineSummary.improved.length > 0
+                      ? "border-teal-400/20 bg-teal-500/10 text-teal-100"
+                      : "border-white/10 bg-white/5 text-[var(--ink-muted)]"
+                }`}
+              >
+                {baselineSummary.headline}
+              </p>
+            )}
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[480px] text-left text-sm">
+                <thead className="text-[10px] uppercase tracking-[0.14em] text-[var(--ink-faint)]">
+                  <tr>
+                    <th className="pb-2 font-normal">Metric</th>
+                    <th className="pb-2 font-normal">Before</th>
+                    <th className="pb-2 font-normal">After</th>
+                    <th className="pb-2 font-normal">Change</th>
+                  </tr>
+                </thead>
+                <tbody className="text-[var(--ink-muted)]">
+                  {baselineRows.map((row) => (
+                    <tr key={row.key} className="border-t border-white/5">
+                      <td className="py-2 text-[var(--ink)]">{row.label}</td>
+                      <td className="py-2">{formatBaselineValue(row.key, row.before)}</td>
+                      <td className="py-2">{formatBaselineValue(row.key, row.after)}</td>
                       <td className="py-2">
-                        {b == null
-                          ? "—"
-                          : key === "jankRatio"
-                            ? `${((b as number) * 100).toFixed(0)}%`
-                            : b}
+                        <span
+                          className={`inline-flex items-center gap-1.5 ${
+                            row.delta === 0
+                              ? "text-[var(--ink-muted)]"
+                              : row.improved
+                                ? "text-teal-200"
+                                : "text-rose-200"
+                          }`}
+                        >
+                          {row.delta === 0
+                            ? "no change"
+                            : `${row.improved ? "better" : "worse"} ${pctChange(
+                                row.key,
+                                row.before,
+                                row.after,
+                              )}`}
+                        </span>
                       </td>
-                      <td className="py-2">
-                        {a == null
-                          ? "—"
-                          : key === "jankRatio"
-                            ? `${((a as number) * 100).toFixed(0)}%`
-                            : a}
-                      </td>
-                      <td className="py-2">{delta}</td>
                     </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </section>
     </div>

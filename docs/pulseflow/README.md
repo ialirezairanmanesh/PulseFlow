@@ -47,17 +47,57 @@ Use **Try demo mode** to explore every lab surface without a Flutter app.
 | Route | Purpose |
 | --- | --- |
 | `/` | Connect / discover / demo. Redirects to `/problems` when already connected |
-| `/problems` | **Primary.** Ranked issues + Record / Freeze + link to Report |
+| `/problems` | **Primary.** Health verdict + "Fix this next" plan + ranked issues, Record / Freeze, link to Report |
 | `/widgets` | Rebuild table (route, app-only, during-jank filters) |
 | `/frames` | Build/Raster charts, markers, Export Perfetto |
 | `/cpu` | CPU record (3/5/10s), top functions, flamegraph |
 | `/memory` | Heap chart + Snapshots / Diff / Leaks tabs |
 | `/network` | Full HTTP list, waterfall, slowest endpoints |
-| `/tools` | Lab: stress params, scenarios, before/after baselines |
-| `/report` | Agent report (copy/download), Markdown/JSON export, Save session, baselines |
-| `/history` | Saved sessions + stat-by-stat comparison |
+| `/tools` | Lab: Flutter debug overlays, stress, scenarios, baselines |
+| `/report` | Agent report (copy/download), Markdown/JSON export, Save session, before/after verdict |
+| `/history` | Saved sessions + verdict comparison (regression banner) |
+| `/ai` | AI assistant settings: provider, model, API key, answer language |
 
 The bridge WebSocket is shared across pages (React context) — route changes do not reconnect.
+
+## Decision-first UX
+
+The dashboard answers three questions instead of dumping metrics:
+
+- **Is my app OK?** — `/problems` opens with a session **health verdict**: a
+  `Healthy / Needs work / Problems` status, a 0–100 score, and per-metric **budget chips** (P95 build,
+  P95 raster, jank ratio vs their budgets). Budgets mirror `pulseflow_check` (`check.dart`): P95
+  build/raster against the measured frame budget, jank ratio against 20%. The same verdict also shows
+  as a pill in the header on every page.
+- **What do I fix first?** — each problem carries a normalized `impact` (0–100); the list is ranked by
+  severity then impact. `/problems` renders a **Fix this next** hero card (why / fix / verify + source
+  link), a Pareto line, and an "Also worth fixing" list. Screens / rebuild roots / errors collapse
+  under a "Show details" toggle.
+- **Why, and did my fix help?** — every problem gets a plain-language `why` sentence built from
+  measured data (cause root, share, cost vs budget, jank). Before/after baselines on `/report` and two
+  selected sessions on `/history` render as a verdict banner (`Improved…` / `Regression…`) with
+  percent change per metric.
+
+All of this is derived in the dashboard (`src/lib/verdict.ts`, `impact.ts`, `explain.ts`) from data
+already on the wire — no protocol or Flutter-package changes.
+
+## AI assistant
+
+The dashboard can review any section with **your own AI provider key** (none is bundled).
+
+- **Configure** on the **AI** page (`/ai`): pick a provider — **OpenAI-compatible** (any base URL:
+  OpenAI, DeepSeek, OpenRouter, Moonshot, a local Ollama/LM Studio server, …), **Anthropic**, or
+  **Google Gemini** — set the model, paste the key, choose the answer language (فارسی / English), then
+  **Test connection**.
+- **Use** the **Ask AI** button in the header on any page: a drawer opens, detects the current section
+  (Problems, Widgets, Frames, CPU, Memory, Network, Report), sends that view's data, and streams back a
+  plain-language explanation with prioritized fixes; follow-up questions keep the conversation. The
+  message says what to re-measure so you can confirm a fix.
+
+**Privacy:** the key is stored server-side in `.data/ai-settings.json` (git-ignored) and is used only by
+the local `/api/ai/*` proxy routes — it is never sent to the browser, and responses/errors redact it.
+These routes run on the same host as the dashboard (localhost, the same trust model as the bridge). Only
+the data shown in the current section is sent to your provider.
 
 ## Session history
 
@@ -70,10 +110,11 @@ ratio, and problem count (deltas mark improvements). The store keeps the latest 
 
 **Copy agent report** on `/report` builds a single self-contained Markdown document and copies it
 to the clipboard — paste it straight into an AI agent. It opens with a reviewer prompt, then the
-ranked problems (with causes and source links), rebuild roots, errors, oversized images, CPU
-hotspots, memory growth, slow HTTP, top rebuilding widgets, and session stats. **Agent .md**
-downloads the same document as a file. The report is capped per section to stay within token
-budgets; `buildAgentReportJson` provides the equivalent structured payload.
+ranked problems (with causes, `impact`, a plain-language `why` line, and source links), rebuild
+roots, errors, oversized images, CPU hotspots, memory growth, slow HTTP, top rebuilding widgets,
+and session stats. **Agent .md** downloads the same document as a file. The report is capped per
+section to stay within token budgets; `buildAgentReportJson` provides the equivalent structured
+payload.
 
 ## Widget probe + scenarios (Flutter package)
 

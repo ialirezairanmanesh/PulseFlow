@@ -86,8 +86,9 @@ export function CpuPanel() {
         )}
         {capabilities?.cpuSamples === false && (
           <p className="mt-2 rounded-md border border-amber-400/20 bg-amber-400/10 px-3 py-2 text-sm text-amber-100">
-            getCpuSamples is not available on this VM. Run the app in profile mode with the
-            CPU profiler enabled.
+            {cpuMessage?.startsWith("CPU probe failed:")
+              ? cpuMessage
+              : "getCpuSamples is not available on this VM. Run the app in profile mode with the CPU profiler enabled."}
           </p>
         )}
       </section>

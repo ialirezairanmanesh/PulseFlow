@@ -164,7 +164,13 @@ export function buildAgentReportMarkdown(input: AgentReportInput): string {
     lines.push("_No ranked problems in this session._", "");
   } else {
     data.problems.forEach((p, i) => {
-      lines.push(`${i + 1}. **[${p.severity.toUpperCase()}] ${p.title}** — ${p.detail}`);
+      const impactLabel = p.impact != null ? ` (impact ${p.impact})` : "";
+      lines.push(
+        `${i + 1}. **[${p.severity.toUpperCase()}] ${p.title}**${impactLabel} — ${p.detail}`,
+      );
+      if (p.why) {
+        lines.push(`   - Why: ${p.why}`);
+      }
       lines.push(`   - Fix: ${p.action}`);
       if (p.sourceUri) {
         lines.push(`   - Source: ${p.sourceUri}${p.sourceLine ? `:${p.sourceLine}` : ""}`);

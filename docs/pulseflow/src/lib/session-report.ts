@@ -57,8 +57,10 @@ export function buildSessionReportMarkdown(input: SessionReportInput): string {
     lines.push("_No ranked problems in this session._", "");
   } else {
     for (const p of data.problems) {
-      lines.push(`### ${p.severity.toUpperCase()} — ${p.title}`);
+      const impactLabel = p.impact != null ? ` (impact ${p.impact})` : "";
+      lines.push(`### ${p.severity.toUpperCase()}${impactLabel} — ${p.title}`);
       lines.push(p.detail);
+      if (p.why) lines.push(`**Why:** ${p.why}`);
       lines.push(`**Fix:** ${p.action}`);
       lines.push("");
     }

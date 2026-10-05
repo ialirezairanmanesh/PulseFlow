@@ -73,6 +73,15 @@ describe("buildAgentReportMarkdown", () => {
     expect(md).toContain("120 Hz");
   });
 
+  it("surfaces impact and the plain-language why", () => {
+    const md = buildAgentReportMarkdown({
+      ...input,
+      problems: [{ ...problem, impact: 82, why: "Because ListState rebuilds, Card rebuilds 22/s." }],
+    });
+    expect(md).toContain("impact 82");
+    expect(md).toContain("Why: Because ListState rebuilds");
+  });
+
   it("explains profile-mode gaps in the coverage section", () => {
     const md = buildAgentReportMarkdown({
       ...input,

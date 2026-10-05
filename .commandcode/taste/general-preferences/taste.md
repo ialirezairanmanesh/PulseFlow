@@ -13,3 +13,5 @@
 - Expects multi-phase feature plans to be written out as reusable markdown plan files (e.g. under `~/.commandcode/plans/`) that the implementation then references and follows. Confidence: 0.5
 - Prefers each new implementation phase to be executed in a fresh, separate chat/session (independent context) rather than in the current thread — e.g. asked to "open a new chat" and do the work there. Confidence: 0.5
 - Wants tools/features to produce a self-contained, exportable output artifact (e.g. copy-to-clipboard or downloadable Markdown/JSON) that can be handed off to external AI agents for review, not just data visible in the UI. Confidence: 0.45
+- Security-minded about secrets: prefers API keys/tokens stored server-side (git-ignored) and proxied through the app's own backend so they are never exposed to the browser/client, with keys redacted from responses and errors. Confidence: 0.6
+- Prefers integrations to be provider-agnostic — supporting multiple providers (e.g. OpenAI-compatible with configurable base URL, Anthropic, Gemini) via a settings page rather than being locked to a single vendor. Confidence: 0.55

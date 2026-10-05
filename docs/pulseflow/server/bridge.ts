@@ -39,7 +39,25 @@ type ClientMsg =
       objectId?: string;
     }
   | { type: "timelineExport"; action: "perfetto"; durationMs?: number }
-  | { type: "networkControl"; action: "refresh" | "clear" | "enable" };
+  | { type: "networkControl"; action: "refresh" | "clear" | "enable" }
+  | {
+      type: "debugOptions";
+      action: "get" | "set";
+      id?: string;
+      enabled?: boolean;
+    };
+
+const DEBUG_OPTION_DEFS = [
+  { id: "performanceOverlay", method: "ext.flutter.showPerformanceOverlay", kind: "bool" },
+  { id: "debugPaint", method: "ext.flutter.debugPaint", kind: "bool" },
+  { id: "debugPaintBaselines", method: "ext.flutter.debugPaintBaselinesEnabled", kind: "bool" },
+  { id: "repaintRainbow", method: "ext.flutter.repaintRainbow", kind: "bool" },
+  { id: "invertOversizedImages", method: "ext.flutter.invertOversizedImages", kind: "bool" },
+  { id: "debugBanner", method: "ext.flutter.debugAllowBanner", kind: "bool" },
+  { id: "slowAnimations", method: "ext.flutter.timeDilation", kind: "timeDilation" },
+] as const;
+
+const SLOW_ANIMATION_DILATION = 5;
 
 interface CapabilityMap {
   cpuSamples: boolean;
@@ -204,6 +222,7 @@ interface Session {
     kind: "jank" | "gc" | "shader" | "other";
     label: string;
   }>;
+  mockDebugOptions: Record<string, boolean>;
 }
 
 function send(client: WebSocket, payload: unknown) {
@@ -543,6 +562,10 @@ function startMock(session: Session) {
     available: true,
     message: "Mock network profile enabled",
   });
+  for (const key of Object.keys(session.mockDebugOptions)) {
+    session.mockDebugOptions[key] = false;
+  }
+  emitMockDebugOptions(session);
   emitMockHotWidgets(session);
   session.mockTimer = setInterval(() => emitMockMetrics(session), 500);
   session.hotWidgetTimer = setInterval(() => emitMockHotWidgets(session), 1000);
@@ -1154,22 +1177,38 @@ async function probeCapabilities(session: Session) {
 
   const isolateId = session.isolateId;
 
-  // Soft probes — success OR specific errors still mean the method exists
-  const probe = async (method: string, params: Record<string, unknown>) => {
-    try {
-      await rpc(session, method, params, 1200);
-      return true;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      if (/unknown method|not found|not available|MethodNotFound/i.test(msg)) {
-        return false;
+  // Enable sampling before CPU probes. There is no getFlag RPC — only
+  // getFlagList / setFlag — and a cold parallel probe can time out and
+  // falsely mark getCpuSamples unavailable.
+  await ensureProfiler(session);
+
+  const probe = async (
+    method: string,
+    params: Record<string, unknown>,
+    opts?: { retryTimeout?: boolean },
+  ) => {
+    const once = async () => {
+      try {
+        await rpc(session, method, params, 2500);
+        return true;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/unknown method|not found|MethodNotFound/i.test(msg)) {
+          return false;
+        }
+        if (/timeout/i.test(msg)) return false;
+        // Other errors (bad args, profiler previously disabled) still mean
+        // the method exists on this VM.
+        return true;
       }
-      // Timeout on probe → treat as unavailable to keep connect snappy
-      if (/timeout/i.test(msg)) return false;
-      // Other errors (bad args, profiler disabled) still mean method exists
-      return true;
-    }
+    };
+    const first = await once();
+    if (first || !opts?.retryTimeout) return first;
+    await new Promise((r) => setTimeout(r, 200));
+    return once();
   };
+
+  const profilerFlag = await profilerFlagAvailable(session);
 
   const [
     cpuSamples,
@@ -1180,14 +1219,17 @@ async function probeCapabilities(session: Session) {
     perfettoTimeline,
     perfettoCpuSamples,
     vmTimelineMicros,
-    profilerFlag,
     socketProfile,
   ] = await Promise.all([
-    probe("getCpuSamples", {
-      isolateId,
-      timeOriginMicros: 0,
-      timeExtentMicros: 1,
-    }),
+    probe(
+      "getCpuSamples",
+      {
+        isolateId,
+        timeOriginMicros: 0,
+        timeExtentMicros: 1,
+      },
+      { retryTimeout: true },
+    ),
     probe("clearCpuSamples", { isolateId }),
     probe("getAllocationProfile", { isolateId }),
     probe("getRetainingPath", {
@@ -1210,7 +1252,6 @@ async function probeCapabilities(session: Session) {
       timeExtentMicros: 1,
     }),
     probe("getVMTimelineMicros", {}),
-    probe("getFlag", { name: "profiler" }),
     probe("ext.dart.io.getSocketProfile", { isolateId }),
   ]);
 
@@ -1237,13 +1278,28 @@ async function probeCapabilities(session: Session) {
   });
 }
 
-async function ensureProfiler(session: Session) {
-  if (!session.caps.profilerFlag) return;
+async function profilerFlagAvailable(session: Session): Promise<boolean> {
   try {
-    const flag = (await rpc(session, "getFlag", { name: "profiler" })) as {
-      result?: { valueAsString?: string };
+    const res = (await rpc(session, "getFlagList", {}, 2500)) as {
+      result?: { flags?: Array<{ name?: string }> };
     };
-    if (flag.result?.valueAsString === "true") return;
+    return !!res.result?.flags?.some((f) => f.name === "profiler");
+  } catch {
+    return false;
+  }
+}
+
+async function ensureProfiler(session: Session) {
+  try {
+    const res = (await rpc(session, "getFlagList", {}, 2500)) as {
+      result?: { flags?: Array<{ name?: string; valueAsString?: string }> };
+    };
+    const profiler = res.result?.flags?.find((f) => f.name === "profiler");
+    if (profiler?.valueAsString === "true") return;
+  } catch {
+    // Fall through and still try setFlag.
+  }
+  try {
     await rpc(session, "setFlag", { name: "profiler", value: "true" });
   } catch {
     /* best effort */
@@ -2149,6 +2205,7 @@ async function connectVm(session: Session, url: string) {
         message: `Connected to VM Service`,
         isolateName,
       });
+      void handleDebugOptions(session, "get");
       if (session.caps.scenarios) {
         void handleScenario(session, "list");
       }
@@ -2221,6 +2278,128 @@ async function connectVm(session: Session, url: string) {
         message: "VM Service closed the connection",
       });
     }
+  });
+}
+
+async function handleDebugOptions(
+  session: Session,
+  action: string,
+  id?: string,
+  enabled?: boolean,
+) {
+  if (session.mode === "mock") {
+    if (action === "set" && id && typeof enabled === "boolean" && id in session.mockDebugOptions) {
+      session.mockDebugOptions[id] = enabled;
+    }
+    emitMockDebugOptions(
+      session,
+      action === "set" && id
+        ? `Demo: ${id} ${enabled ? "on" : "off"} (no device overlay)`
+        : undefined,
+    );
+    return;
+  }
+  if (session.mode !== "live" || !session.isolateId) {
+    send(session.client, {
+      type: "debugOptions",
+      options: [],
+      message: "Connect to a Flutter app to use debug overlays",
+    });
+    return;
+  }
+
+  if (action === "set") {
+    if (!id || typeof enabled !== "boolean") {
+      send(session.client, {
+        type: "error",
+        message: "debugOptions set requires id and enabled",
+      });
+      return;
+    }
+    const def = DEBUG_OPTION_DEFS.find((d) => d.id === id);
+    if (!def) {
+      send(session.client, { type: "error", message: `Unknown debug option: ${id}` });
+      return;
+    }
+    if (!session.extensionMethods.includes(def.method)) {
+      send(session.client, {
+        type: "error",
+        message: `${def.method} is not available on this isolate (needs a debug/profile Flutter app)`,
+      });
+      await readLiveDebugOptions(session, "Some Flutter debug extensions are unavailable");
+      return;
+    }
+    try {
+      if (def.kind === "timeDilation") {
+        await rpc(session, def.method, {
+          isolateId: session.isolateId,
+          timeDilation: enabled ? String(SLOW_ANIMATION_DILATION) : "1.0",
+        });
+      } else {
+        await rpc(session, def.method, {
+          isolateId: session.isolateId,
+          enabled: String(enabled),
+        });
+      }
+    } catch (err) {
+      send(session.client, {
+        type: "error",
+        message: err instanceof Error ? err.message : String(err),
+      });
+    }
+    await readLiveDebugOptions(session, `${def.id} ${enabled ? "enabled" : "disabled"}`);
+    return;
+  }
+
+  await readLiveDebugOptions(session);
+}
+
+function parseBoolFlag(value: unknown): boolean {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") return value.toLowerCase() === "true";
+  return false;
+}
+
+async function readLiveDebugOptions(session: Session, message?: string) {
+  const options: Array<{ id: string; enabled: boolean; available: boolean }> = [];
+  for (const def of DEBUG_OPTION_DEFS) {
+    const available = session.extensionMethods.includes(def.method);
+    let enabled = false;
+    if (available) {
+      try {
+        const res = (await rpc(session, def.method, {
+          isolateId: session.isolateId,
+        })) as { result?: Record<string, unknown> };
+        const result = res.result ?? {};
+        if (def.kind === "timeDilation") {
+          const dilation = Number(result.timeDilation ?? result.value ?? 1);
+          enabled = dilation > 1;
+        } else {
+          enabled = parseBoolFlag(result.enabled);
+        }
+      } catch {
+        options.push({ id: def.id, enabled: false, available: false });
+        continue;
+      }
+    }
+    options.push({ id: def.id, enabled, available });
+  }
+  send(session.client, {
+    type: "debugOptions",
+    options,
+    ...(message ? { message } : {}),
+  });
+}
+
+function emitMockDebugOptions(session: Session, message?: string) {
+  send(session.client, {
+    type: "debugOptions",
+    options: DEBUG_OPTION_DEFS.map((d) => ({
+      id: d.id,
+      enabled: session.mockDebugOptions[d.id] ?? false,
+      available: true,
+    })),
+    message: message ?? "Demo debug options — toggles are local only",
   });
 }
 
@@ -2349,6 +2528,7 @@ function attachClient(client: WebSocket) {
     seenHttpIds: new Set(),
     scenarioRunning: null,
     timelineMarkers: [],
+    mockDebugOptions: Object.fromEntries(DEBUG_OPTION_DEFS.map((d) => [d.id, false])),
   };
 
   send(client, {
@@ -2424,10 +2604,12 @@ function attachClient(client: WebSocket) {
                 scenarios: MOCK_SCENARIOS,
                 running: session.scenarioRunning,
               });
+              emitMockDebugOptions(session);
             } else if (session.mode === "live") {
               await refreshExtensions(session);
               await probeCapabilities(session);
               if (session.caps.scenarios) void handleScenario(session, "list");
+              void handleDebugOptions(session, "get");
             } else {
               send(client, {
                 type: "extension",
@@ -2462,6 +2644,9 @@ function attachClient(client: WebSocket) {
             break;
           case "networkControl":
             await handleNetworkControl(session, msg.action);
+            break;
+          case "debugOptions":
+            await handleDebugOptions(session, msg.action, msg.id, msg.enabled);
             break;
           default:
             send(client, { type: "error", message: "Unknown bridge command" });

@@ -122,6 +122,14 @@ export interface PerformanceProblem {
   relatedBuildMs?: number;
   sourceUri?: string;
   sourceLine?: number;
+  /** Normalized 0–100 priority (severity base × magnitude × jank/cost). Higher = fix sooner. */
+  impact?: number;
+  /** One plain-language cause→effect sentence generated from measured data. */
+  why?: string;
+  /** Rebuild root that triggered this problem (rebuilds only, when known). */
+  cause?: string;
+  /** True when this item was observed during a janky frame. */
+  duringJank?: boolean;
 }
 
 export interface HotWidgetsPayload {
@@ -314,6 +322,7 @@ export interface BridgeCapabilitiesMessage {
   type: "capabilities";
   caps: CapabilityMap;
   message?: string;
+  cpuProbeError?: string;
 }
 
 export interface BridgeCpuProfileMessage {
@@ -454,6 +463,28 @@ export interface BridgeBuildInfoMessage {
   probes: ProbeAvailability;
 }
 
+/** Flutter framework debug toggles (same as DevTools Inspector). */
+export type DebugOptionId =
+  | "performanceOverlay"
+  | "debugPaint"
+  | "debugPaintBaselines"
+  | "repaintRainbow"
+  | "invertOversizedImages"
+  | "debugBanner"
+  | "slowAnimations";
+
+export interface DebugOptionState {
+  id: DebugOptionId;
+  enabled: boolean;
+  available: boolean;
+}
+
+export interface BridgeDebugOptionsMessage {
+  type: "debugOptions";
+  options: DebugOptionState[];
+  message?: string;
+}
+
 export type BridgeServerMessage =
   | BridgeStatusMessage
   | BridgeMetricsMessage
@@ -473,7 +504,8 @@ export type BridgeServerMessage =
   | BridgeRebuildCausesMessage
   | BridgeErrorsMessage
   | BridgeImagesMessage
-  | BridgeBuildInfoMessage;
+  | BridgeBuildInfoMessage
+  | BridgeDebugOptionsMessage;
 
 export type BridgeClientMessage =
   | { type: "connect"; url: string }
@@ -505,4 +537,10 @@ export type BridgeClientMessage =
       action: "report" | "start" | "stop" | "reset";
       threshold?: number;
       limit?: number;
+    }
+  | {
+      type: "debugOptions";
+      action: "get" | "set";
+      id?: DebugOptionId;
+      enabled?: boolean;
     };

@@ -53,3 +53,42 @@ export function formatDelta(key: keyof SessionStats, delta: number): string {
   if (key === "jankRatio") return `${(delta * 100).toFixed(1)} pts`;
   return delta.toFixed(2);
 }
+
+/** Percent change from before → after; jank ratio is expressed in points instead. */
+export function pctChange(key: keyof SessionStats, before: number, after: number): string {
+  if (key === "jankRatio") {
+    const delta = (after - before) * 100;
+    return `${delta >= 0 ? "+" : ""}${delta.toFixed(1)} pts`;
+  }
+  if (before === 0) return after === 0 ? "0%" : "new";
+  const pct = ((after - before) / Math.abs(before)) * 100;
+  return `${pct >= 0 ? "+" : ""}${pct.toFixed(0)}%`;
+}
+
+export interface ComparisonSummary {
+  improved: ComparisonRow[];
+  regressed: ComparisonRow[];
+  headline: string;
+}
+
+/** A one-line verdict for a before/after comparison (lower is better). */
+export function summarizeComparison(rows: ComparisonRow[]): ComparisonSummary {
+  const improved = rows.filter((r) => r.delta !== 0 && r.improved);
+  const regressed = rows.filter((r) => r.delta !== 0 && !r.improved);
+  let headline: string;
+  if (rows.length === 0) {
+    headline = "No comparison data.";
+  } else if (improved.length && regressed.length) {
+    headline = `Mixed: ${improved.length} metric${improved.length === 1 ? "" : "s"} improved, ${regressed.length} regressed.`;
+  } else if (regressed.length) {
+    headline = `Regression: ${regressed
+      .map((r) => r.label)
+      .slice(0, 3)
+      .join(", ")} got worse.`;
+  } else if (improved.length) {
+    headline = `Improved: ${improved.length} of ${rows.length} metrics better.`;
+  } else {
+    headline = "No significant change.";
+  }
+  return { improved, regressed, headline };
+}

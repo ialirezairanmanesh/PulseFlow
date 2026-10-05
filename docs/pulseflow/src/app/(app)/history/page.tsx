@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { SavedSession } from "@/lib/session-history";
-import { compareSessions, formatDelta } from "@/lib/session-history";
+import { compareSessions, formatDelta, pctChange, summarizeComparison } from "@/lib/session-history";
 
 export default function HistoryPage() {
   const [sessions, setSessions] = useState<SavedSession[]>([]);
@@ -38,6 +38,7 @@ export default function HistoryPage() {
 
   const picked = sessions.filter((s) => selected.includes(s.id));
   const comparison = picked.length === 2 ? compareSessions(picked[0], picked[1]) : [];
+  const summary = comparison.length > 0 ? summarizeComparison(comparison) : null;
 
   return (
     <div className="space-y-4">
@@ -96,6 +97,19 @@ export default function HistoryPage() {
           <h3 className="mb-3 font-[family-name:var(--font-display)] text-lg tracking-tight text-[var(--ink)]">
             Compare
           </h3>
+          {summary && (
+            <p
+              className={`mb-3 rounded-md border px-3 py-2 text-sm ${
+                summary.regressed.length > 0
+                  ? "border-rose-400/25 bg-rose-500/10 text-rose-100"
+                  : summary.improved.length > 0
+                    ? "border-teal-400/20 bg-teal-500/10 text-teal-100"
+                    : "border-white/10 bg-white/5 text-[var(--ink-muted)]"
+              }`}
+            >
+              {summary.headline}
+            </p>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full min-w-[420px] text-left text-sm">
               <thead className="text-[10px] uppercase tracking-[0.14em] text-[var(--ink-faint)]">
@@ -113,7 +127,9 @@ export default function HistoryPage() {
                     <td className="py-2">{row.before.toFixed(2)}</td>
                     <td className="py-2">{row.after.toFixed(2)}</td>
                     <td className={`py-2 ${row.improved ? "text-teal-200" : "text-rose-200"}`}>
-                      {formatDelta(row.key, row.delta)}
+                      {row.key === "jankRatio"
+                        ? formatDelta(row.key, row.delta)
+                        : `${formatDelta(row.key, row.delta)} (${pctChange(row.key, row.before, row.after)})`}
                     </td>
                   </tr>
                 ))}

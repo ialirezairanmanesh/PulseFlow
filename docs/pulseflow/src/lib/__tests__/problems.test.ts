@@ -161,4 +161,37 @@ describe("tipForWidget", () => {
   it("suggests virtualization for lists", () => {
     expect(tipForWidget("ListView", 10)).toMatch(/virtuali/i);
   });
+
+  it("adds a jank note when the widget rebuilds on janky frames", () => {
+    expect(tipForWidget("ListView", 10, { duringJank: true })).toMatch(/janky/i);
+  });
+});
+
+describe("buildProblems impact + explanation", () => {
+  it("attaches an impact score and a plain-language why", () => {
+    const problems = buildProblems({
+      hot: hotPayload([
+        widget({ name: "InvoiceCard", ratePerSec: 22, share: 40, duringJank: true }),
+      ]),
+      hotAvailable: true,
+      gcEvents: [],
+    });
+    const hot = problems.find((p) => p.kind === "hot_rebuild");
+    expect(hot?.impact).toBeGreaterThan(0);
+    expect(hot?.why).toContain("InvoiceCard");
+    expect(hot?.why).not.toContain("NaN");
+  });
+
+  it("orders problems of equal severity by impact", () => {
+    const problems = buildProblems({
+      hot: hotPayload([
+        widget({ id: "a", name: "A", ratePerSec: 9, share: 21 }),
+        widget({ id: "b", name: "B", ratePerSec: 10, share: 30 }),
+      ]),
+      hotAvailable: true,
+      gcEvents: [],
+    });
+    const hot = problems.filter((p) => p.kind === "hot_rebuild");
+    expect(hot[0]?.widget).toBe("B");
+  });
 });

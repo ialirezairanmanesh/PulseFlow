@@ -1,5 +1,7 @@
 import { isAppCpuFrame, tipForCpuHotspot } from "@/lib/cpu-profile";
 import { FRAME_BUDGET } from "@/lib/chart-utils";
+import { attachImpact, type ImpactContext } from "@/lib/impact";
+import { explainProblem } from "@/lib/explain";
 import type {
   AttributedRebuild,
   CpuProfileSummary,
@@ -14,23 +16,26 @@ import type {
   WidgetRebuildStat,
 } from "@/lib/types";
 
-export function tipForWidget(name: string, share: number): string {
+export function tipForWidget(
+  name: string,
+  share: number,
+  ctx?: { ratePerSec?: number; duringJank?: boolean },
+): string {
+  const jankNote = ctx?.duringJank ? " It is rebuilding on janky frames — fix this first." : "";
   if (/ListView|GridView|Sliver/i.test(name)) {
-    return "Keep the list virtualized; const/memo list items";
+    return `Keep the list virtualized; const/memo list items.${jankNote}`;
   }
   if (/StreamBuilder|FutureBuilder|Animated/i.test(name)) {
-    return "Narrow listeners; push state lower in the tree";
+    return `Narrow listeners; push state lower in the tree.${jankNote}`;
   }
   if (/Painter|CustomPaint|Chart/i.test(name)) {
-    return "Cache paint or wrap with RepaintBoundary";
+    return `Cache paint or wrap with RepaintBoundary.${jankNote}`;
   }
-  if (share >= 25) {
-    return "High rebuilds → isolate setState, use const, or split the widget";
+  if (share >= 25 || (ctx?.ratePerSec ?? 0) >= 15) {
+    return `High rebuilds → isolate setState, use const, or split the widget.${jankNote}`;
   }
-  return "Isolate rebuilds with const, keys, or a smaller StatefulWidget";
+  return `Isolate rebuilds with const, keys, or a smaller StatefulWidget.${jankNote}`;
 }
-
-const severityRank = { high: 0, medium: 1, low: 2 } as const;
 
 function hotRebuildProblem(
   w: WidgetRebuildStat,
@@ -53,7 +58,7 @@ function hotRebuildProblem(
     kind: "hot_rebuild",
     title: `${w.name} rebuilds heavily${routeLabel}`,
     detail: `${w.ratePerSec.toFixed(1)}/s in the last window (${w.share.toFixed(1)}% of rebuilds)${sourceLabel}${causeLabel}`,
-    action: tipForWidget(w.name, w.share),
+    action: tipForWidget(w.name, w.share, { ratePerSec: w.ratePerSec, duringJank: w.duringJank }),
     route: w.route,
     widget: w.name,
     ratePerSec: w.ratePerSec,
@@ -61,10 +66,12 @@ function hotRebuildProblem(
     relatedBuildMs: buildMs,
     sourceUri: w.sourceUri,
     sourceLine: w.sourceLine,
+    cause: cause && cause !== w.name ? cause : undefined,
+    duringJank: w.duringJank,
   };
 }
 
-function percentile(values: number[], p: number): number {
+export function percentile(values: number[], p: number): number {
   if (!values.length) return 0;
   const sorted = [...values].sort((a, b) => a - b);
   const idx = Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length));
@@ -249,13 +256,11 @@ export function buildProblems(input: {
     });
   }
 
-  problems.sort((a, b) => {
-    const s = severityRank[a.severity] - severityRank[b.severity];
-    if (s !== 0) return s;
-    return (b.ratePerSec ?? 0) - (a.ratePerSec ?? 0);
-  });
+  const ctx: ImpactContext = { budgetMs, jankRatio };
+  const ranked = attachImpact(problems, ctx);
+  for (const p of ranked) p.why = explainProblem(p, ctx);
 
-  return problems.slice(0, 8);
+  return ranked.slice(0, 8);
 }
 
 export function computeBaselineMetrics(input: {
