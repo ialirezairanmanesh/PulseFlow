@@ -159,6 +159,9 @@ interface WidgetRebuildStat {
   lastSeenMs: number;
   isFramework?: boolean;
   duringJank?: boolean;
+  parentId?: string;
+  depth?: number;
+  inTree?: boolean;
 }
 
 interface ScreenRebuildStat {
@@ -178,6 +181,7 @@ interface HotWidgetsPayload {
   totalRebuilds?: number;
   currentRoute?: string;
   widgets: WidgetRebuildStat[];
+  tree?: WidgetRebuildStat[];
   screens: ScreenRebuildStat[];
   frozen?: boolean;
   duringJank?: boolean;
@@ -710,6 +714,9 @@ function mapWidgetStat(
     lastSeenMs: Number(raw.lastSeenMs) || 0,
     isFramework: Boolean(raw.isFramework),
     duringJank: Boolean(raw.duringJank) || duringJank,
+    parentId: raw.parentId != null ? String(raw.parentId) : undefined,
+    depth: raw.depth != null ? Number(raw.depth) : undefined,
+    inTree: raw.inTree != null ? Boolean(raw.inTree) : undefined,
   };
 }
 
@@ -746,13 +753,16 @@ async function pollHotWidgets(session: Session) {
   try {
     const res = await rpc(session, "ext.pulseflow.getHotWidgets", {
       isolateId: session.isolateId,
-      limit: "40",
+      limit: "500",
     });
     const data = parseExtensionJson(res);
     if (!data) return;
     const windowMs = Number(data.windowMs) || 10000;
     const duringJank = session.lastFrameMs > FRAME_BUDGET_MS;
     const rawWidgets = (Array.isArray(data.widgets) ? data.widgets : []) as Array<
+      Record<string, unknown>
+    >;
+    const rawTree = (Array.isArray(data.tree) ? data.tree : []) as Array<
       Record<string, unknown>
     >;
     const totalWindow =
@@ -771,6 +781,10 @@ async function pollHotWidgets(session: Session) {
     const widgets = rawWidgets.map((w) =>
       mapWidgetStat(w, totalWindow, windowMs, duringJank),
     );
+    const tree = rawTree.map((w) =>
+      mapWidgetStat(w, totalWindow, windowMs, duringJank),
+    );
+    const primary = tree.length > 0 ? tree : widgets;
     const windowSec = windowMs / 1000;
     let screens: ScreenRebuildStat[] = [];
     if (Array.isArray(data.screens)) {
@@ -800,7 +814,7 @@ async function pollHotWidgets(session: Session) {
       });
     } else {
       const byRoute = new Map<string, WidgetRebuildStat[]>();
-      for (const w of widgets) {
+      for (const w of primary) {
         const list = byRoute.get(w.route) ?? [];
         list.push(w);
         byRoute.set(w.route, list);
@@ -816,7 +830,7 @@ async function pollHotWidgets(session: Session) {
               totalWindow > 0
                 ? Number(((rebuildsWindow / totalWindow) * 100).toFixed(1))
                 : 0,
-            topWidgets: list.slice(0, 5),
+            topWidgets: list.filter((w) => w.rebuildsWindow > 0).slice(0, 5),
           };
         })
         .sort((a, b) => b.rebuildsWindow - a.rebuildsWindow);
@@ -832,12 +846,15 @@ async function pollHotWidgets(session: Session) {
       totalRebuilds: totalWindow,
       currentRoute:
         data.currentRoute != null ? String(data.currentRoute) : undefined,
-      widgets,
+      widgets: primary,
+      tree: tree.length > 0 ? tree : undefined,
       screens,
       frozen: Boolean(data.frozen) || session.hotWidgetsFrozen,
       duringJank,
       message:
-        totalWindow === 0 ? "Sampling rebuilds — interact with the UI" : undefined,
+        primary.length === 0
+          ? "Sampling widget tree — open a screen in the app"
+          : undefined,
     };
     session.lastHotWidgetsPayload = payload;
     send(session.client, payload);

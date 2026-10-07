@@ -6,7 +6,21 @@ import {
   type AiContextState,
 } from "@/lib/ai-context";
 import { buildProblems } from "@/lib/problems";
+import type { NetworkRequest } from "@/lib/types";
 import { hotPayload, point, widget } from "./helpers";
+
+function slowPost(uri = "https://api.fidadev.ir/v6/invoice", latencyMs = 3450): NetworkRequest {
+  return {
+    id: "1",
+    t: 0,
+    method: "POST",
+    uri,
+    latencyMs,
+    requestBytes: 100,
+    responseBytes: 200,
+    status: 200,
+  };
+}
 
 function state(overrides: Partial<AiContextState> = {}): AiContextState {
   const problems =
@@ -17,6 +31,27 @@ function state(overrides: Partial<AiContextState> = {}): AiContextState {
       gcEvents: [],
     });
   return { points: [point({ buildMs: 20 })], problems, ...overrides };
+}
+
+function mixedState() {
+  const hot = hotPayload(
+    [widget({ name: "InvoiceCard", route: "/invoice/create", ratePerSec: 22, share: 40 })],
+    { currentRoute: "/invoice/create" },
+  );
+  const network = [slowPost()];
+  const memoryDiff = {
+    fromId: "a",
+    toId: "b",
+    grew: [{ className: "InvoiceCache", bytesDelta: 2 * 1024 * 1024, instancesDelta: 40 }],
+  };
+  const problems = buildProblems({
+    hot,
+    hotAvailable: true,
+    gcEvents: [],
+    network,
+    memoryDiff,
+  });
+  return state({ hot, problems, network, memoryDiff });
 }
 
 describe("sectionFromPath", () => {
@@ -54,6 +89,7 @@ describe("buildSectionContext", () => {
     expect(context).toContain("P95 build");
     expect(context).toContain("InvoiceCard");
     expect(context).toContain("/invoices");
+    expect(context).toContain("Frame budget health");
   });
 
   it("degrades gracefully with no data", () => {
@@ -68,25 +104,105 @@ describe("buildSectionContext", () => {
   });
 
   it("names widgets with route and source in the widgets section", () => {
-    const context = buildSectionContext(
-      "widgets",
-      state({
-        hot: hotPayload([
-          widget({
-            name: "InvoiceCard",
-            route: "/invoices",
-            ratePerSec: 22,
-            share: 40,
-            sourceUri: "package:app/invoice.dart",
-            sourceLine: 42,
-            cause: "InvoiceList",
-          }),
-        ]),
-      }),
+    const hot = hotPayload(
+      [
+        widget({
+          name: "InvoiceCard",
+          route: "/invoices",
+          ratePerSec: 22,
+          share: 40,
+          sourceUri: "package:app/invoice.dart",
+          sourceLine: 42,
+          cause: "InvoiceList",
+        }),
+      ],
+      { currentRoute: "/invoices" },
     );
+    const problems = buildProblems({ hot, hotAvailable: true, gcEvents: [] });
+    const context = buildSectionContext("widgets", state({ hot, problems }));
     expect(context).toContain("`InvoiceCard` on /invoices");
     expect(context).toContain("package:app/invoice.dart:42");
     expect(context).toContain("cause InvoiceList");
+    expect(context).toContain("Widget problems on this screen");
+    expect(context).toContain("Current route/screen: **/invoices**");
+  });
+
+  it("scopes the widgets AI brief to the current route", () => {
+    const hot = hotPayload(
+      [
+        widget({
+          name: "InvoiceCard",
+          route: "/invoices",
+          ratePerSec: 22,
+          share: 40,
+        }),
+        widget({
+          name: "SettingsTile",
+          route: "/settings",
+          ratePerSec: 30,
+          share: 50,
+        }),
+      ],
+      { currentRoute: "/invoices" },
+    );
+    const problems = buildProblems({ hot, hotAvailable: true, gcEvents: [] });
+    const context = buildSectionContext("widgets", state({ hot, problems }));
+    expect(context).toContain("InvoiceCard");
+    expect(context).not.toContain("SettingsTile");
+  });
+
+  it("keeps Slow HTTP out of the widgets AI brief and verdict", () => {
+    const hot = hotPayload(
+      [widget({ name: "InvoiceCard", route: "/invoice/create", ratePerSec: 0.2, share: 1 })],
+      { currentRoute: "/invoice/create" },
+    );
+    const network = [slowPost()];
+    const problems = buildProblems({
+      hot,
+      hotAvailable: true,
+      gcEvents: [],
+      network,
+    });
+    expect(problems.some((p) => p.kind === "slow_http")).toBe(true);
+    const context = buildSectionContext("widgets", state({ hot, problems, network }));
+    expect(context).toContain("Widget rebuild health");
+    expect(context).toContain("Out of scope here");
+    expect(context).not.toContain("Slow HTTP");
+    expect(context).not.toContain("/v6/invoice");
+    expect(context).not.toContain("3450");
+  });
+
+  it("scopes each specialized tab to its own track", () => {
+    const s = mixedState();
+    expect(s.problems.some((p) => p.kind === "slow_http")).toBe(true);
+    expect(s.problems.some((p) => p.kind === "memory_growth")).toBe(true);
+
+    const network = buildSectionContext("network", s);
+    expect(network).toContain("Network / latency health");
+    expect(network).toContain("/v6/invoice");
+    expect(network).toContain("3450");
+    expect(network).not.toContain("InvoiceCard");
+    expect(network).not.toContain("InvoiceCache");
+    expect(network).not.toContain("P95 build");
+
+    const memory = buildSectionContext("memory", s);
+    expect(memory).toContain("Memory health");
+    expect(memory).toContain("InvoiceCache");
+    expect(memory).not.toContain("/v6/invoice");
+    expect(memory).not.toContain("InvoiceCard");
+    expect(memory).not.toContain("P95 build");
+
+    const frames = buildSectionContext("frames", s);
+    expect(frames).toContain("Frame budget health");
+    expect(frames).toContain("P95 build");
+    expect(frames).toContain("InvoiceCard");
+    expect(frames).not.toContain("/v6/invoice");
+    expect(frames).not.toContain("InvoiceCache");
+
+    const widgets = buildSectionContext("widgets", s);
+    expect(widgets).toContain("InvoiceCard");
+    expect(widgets).not.toContain("/v6/invoice");
+    expect(widgets).not.toContain("InvoiceCache");
   });
 });
 
@@ -101,10 +217,18 @@ describe("buildChatMessages", () => {
     expect(messages[1].content).toContain("why?");
   });
 
-  it("uses a default instruction when no question is given", () => {
-    const messages = buildChatMessages("network", "DATA");
-    expect(messages[1].content).toMatch(/concise|accurate/i);
-    expect(messages[1].content).toContain("widget");
+  it("uses a network-focused default on the network section", () => {
+    const messages = buildChatMessages("network", "DATA", undefined, "en");
+    expect(messages[1].content).toMatch(/Network view|HTTP latency/i);
+    expect(messages[0].content).toMatch(/Network tab/i);
+    expect(messages[0].content).toMatch(/Do not review widget rebuilds/i);
+  });
+
+  it("uses a widget-problem-focused default on the widgets section", () => {
+    const messages = buildChatMessages("widgets", "DATA", undefined, "en");
+    expect(messages[1].content).toMatch(/rebuild|quiet for rebuilds/i);
+    expect(messages[0].content).toMatch(/Widgets tab/i);
+    expect(messages[0].content).toMatch(/Do not discuss Slow HTTP/i);
   });
 
   it("keeps the system prompt disciplined about causality and caps", () => {

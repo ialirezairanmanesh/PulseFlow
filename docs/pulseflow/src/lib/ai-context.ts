@@ -9,6 +9,7 @@ import { buildAgentReportMarkdown } from "@/lib/agent-report";
 import { isFrameworkWidget } from "@/lib/framework-widget";
 import { computeVerdict, type BudgetResult } from "@/lib/verdict";
 import { formatBytes } from "@/lib/utils";
+import { compareByHeatThenName, widgetHeat } from "@/lib/widget-heat";
 import type { AiLanguage } from "@/lib/ai-providers";
 import type {
   CpuProfileSummary,
@@ -70,12 +71,16 @@ export const SECTION_TITLES: Record<AiSection, string> = {
 };
 
 const SECTION_HINTS: Record<AiSection, string> = {
-  problems: "the ranked problems, session health verdict, and which app widgets/routes drive them",
-  widgets: "widget rebuild pressure by widget name, route/screen, source location, and rebuild root",
-  frames: "frame timing (build/raster) against the frame budget, tied to hot widgets when present",
-  cpu: "CPU hotspots by self-time, tied to UI rebuild cost when widget data is present",
-  memory: "heap growth, leaks, and image-cache waste",
-  network: "slow HTTP requests (latency / UX wait — separate from frame build cost)",
+  problems:
+    "the ranked Problems list and session health — cover every track present in the brief (frame, network, memory, errors)",
+  widgets:
+    "per-widget rebuild problems on the current screen only: problem count/severity, rebuild rate, share, source, and cause — prioritize the reddest widgets. Do not review HTTP, CPU profiles, heap, or other tabs",
+  frames:
+    "frame timing (build/raster/jank) against the frame budget, and frame-track problems — tie to hot widgets when listed. Do not review HTTP latency or heap/leaks",
+  cpu: "CPU hotspots by self-time and cpu_hotspot problems — tie to rebuild cost only when widget evidence is in the brief. Do not review HTTP or memory",
+  memory: "heap growth, leaks, and image-cache waste only. Do not review rebuilds, frames, or HTTP",
+  network:
+    "slow HTTP requests (latency / UX wait) only. Do not claim latency equals build ms, and do not review widget rebuilds or frame budgets as the main topic",
   report: "the whole session across performance, widgets, CPU, memory, and network",
 };
 
@@ -98,8 +103,51 @@ export const QUICK_PROMPTS = {
     "Is anything regressing? Name the widgets/routes to watch and what metric should improve after a fix.",
 } as const;
 
-const DEFAULT_QUESTION =
-  "Write a concise, accurate performance review. Prefer screen/route rebuild totals and high-rate app widgets over 0–1/s Animated shells. If jank spikes while scrolling a table/list, say so. Cap Findings at 5 and Fixes at 3. Separate frame-budget issues from network latency. Do not invent numbers, libraries, or file paths.";
+export const SECTION_QUICK_PROMPTS: Record<AiSection, readonly string[]> = {
+  problems: Object.values(QUICK_PROMPTS),
+  widgets: [
+    "Review the widgets with the most problems on this screen. For each, cite problem count, severity, rebuild rate, and a concrete Flutter fix.",
+    "Rank the hottest widgets on the current route by impact and tell me which to fix first.",
+    "Which rebuilds here are expected (scroll/animation) vs real bugs? Separate noise from actionable widget problems.",
+  ],
+  frames: [
+    "Are we over the frame budget? Cite P95 build/raster and jank, then the frame problems to fix first.",
+    "Which screens/widgets in this brief drive build or jank cost?",
+    "What should I re-measure on the Frames tab after a fix?",
+  ],
+  cpu: [
+    "Which CPU hotspots matter most by self-time? Give concrete Flutter/Dart fixes.",
+    "Do any hotspots look like UI rebuild cost? Only cite widgets listed in the brief.",
+    "What should I re-profile on the CPU tab after a fix?",
+  ],
+  memory: [
+    "Summarize heap growth, leaks, and image-cache waste. Rank fixes by measured bytes.",
+    "Which classes or images should I investigate first?",
+    "What should I re-measure on the Memory tab after a fix?",
+  ],
+  network: [
+    "Rank the slowest HTTP requests by latency and suggest UX/network fixes (cache, pagination, loading states).",
+    "Which requests are over 1.5s? What should change first?",
+    "What should I re-measure on the Network tab after a fix?",
+  ],
+  report: Object.values(QUICK_PROMPTS),
+};
+
+const SECTION_DEFAULT_QUESTION: Record<AiSection, string> = {
+  problems:
+    "Review the ranked problems for this session. Separate frame-budget issues from network latency and memory. Cap Findings at 5 and Fixes at 3. Do not invent numbers, libraries, or file paths.",
+  widgets:
+    "Stay on the Widgets view: rebuild pressure and widget problems on this screen only. Rank by problem count and rebuild rate/share. For each hot widget name the route, measured evidence, and a concrete Flutter fix. If no widgets have problems or meaningful rebuild rate, say this screen is quiet for rebuilds and stop — do not invent HTTP findings, network fixes, or widget names. Cap Findings at 5 and Fixes at 3. Do not invent numbers, libraries, or file paths.",
+  frames:
+    "Stay on the Frames view: P95 build/raster, jank, and frame-track problems only. Tie findings to hot widgets only when they appear in the brief. Do not discuss HTTP latency or memory leaks. Cap Findings at 5 and Fixes at 3. Do not invent numbers, libraries, or file paths.",
+  cpu: "Stay on the CPU view: hotspot self-time and cpu_hotspot problems only. Mention widgets only if listed in the brief. Do not discuss HTTP or heap. Cap Findings at 5 and Fixes at 3. Do not invent numbers, libraries, or file paths.",
+  memory:
+    "Stay on the Memory view: heap growth, leaks, and image cache only. Do not discuss rebuilds, frames, or HTTP. Cap Findings at 5 and Fixes at 3. Do not invent numbers, libraries, or file paths.",
+  network:
+    "Stay on the Network view: HTTP latency and slow requests only. Do not discuss widget rebuilds, frame budgets, or CPU. Cap Findings at 5 and Fixes at 3. Do not invent numbers, libraries, or file paths.",
+  report:
+    "Write a concise whole-session review. Separate frame-budget, network, and memory tracks. Cap Findings at 5 and Fixes at 3. Do not invent numbers, libraries, or file paths.",
+};
 
 export function sectionFromPath(pathname: string): AiSection {
   const clean = pathname.replace(/\/+$/, "");
@@ -117,21 +165,39 @@ function budgetText(b: BudgetResult): string {
   return `${b.value.toFixed(1)}/${b.budget.toFixed(1)}ms`;
 }
 
-function sessionBlock(state: AiContextState): string {
+function sessionBlock(
+  state: AiContextState,
+  opts?: {
+    /** Subset of problems that should drive the verdict (e.g. frame-only on Widgets). */
+    problems?: PerformanceProblem[];
+    /** Heading when the brief is scoped away from whole-session issues. */
+    title?: string;
+    note?: string;
+    /** Frame budget chips — omit on Network/Memory so the model does not pivot. */
+    includeBudgets?: boolean;
+  },
+): string {
+  const includeBudgets = opts?.includeBudgets !== false;
   const verdict = computeVerdict({
-    points: state.points,
-    problems: state.problems,
+    points: includeBudgets ? state.points : [],
+    problems: opts?.problems ?? state.problems,
     budgetMs: state.budgetMs,
   });
-  return [
-    "## Session health",
+  const lines = [
+    `## ${opts?.title ?? "Session health"}`,
     `- Verdict: **${verdict.status}** (score ${verdict.score}/100)`,
     `- ${verdict.headline}`,
-    `- Budgets: ${verdict.budgets
-      .map((b) => `${b.label} ${budgetText(b)} ${b.passed ? "ok" : "OVER"}`)
-      .join(" · ")}`,
-    `- Mode: ${state.mode ?? "unknown"}`,
-  ].join("\n");
+  ];
+  if (includeBudgets) {
+    lines.push(
+      `- Budgets: ${verdict.budgets
+        .map((b) => `${b.label} ${budgetText(b)} ${b.passed ? "ok" : "OVER"}`)
+        .join(" · ")}`,
+    );
+  }
+  lines.push(`- Mode: ${state.mode ?? "unknown"}`);
+  if (opts?.note) lines.push(`- ${opts.note}`);
+  return lines.join("\n");
 }
 
 function trackOf(kind: PerformanceProblem["kind"]): "frame" | "network" | "memory" | "other" {
@@ -150,6 +216,27 @@ function trackOf(kind: PerformanceProblem["kind"]): "frame" | "network" | "memor
     default:
       return "other";
   }
+}
+
+function problemsOnTrack(
+  problems: PerformanceProblem[],
+  track: "frame" | "network" | "memory",
+): PerformanceProblem[] {
+  return problems.filter((p) => trackOf(p.kind) === track);
+}
+
+function cpuProblems(problems: PerformanceProblem[]): PerformanceProblem[] {
+  return problems.filter((p) => p.kind === "cpu_hotspot");
+}
+
+/** Scoped problems heading — reuse ranking lines without the global Problems title. */
+function scopedProblemsBlock(
+  title: string,
+  problems: PerformanceProblem[],
+  emptyNote: string,
+): string {
+  if (!problems.length) return `## ${title}\n_${emptyNote}_`;
+  return problemsBlock(problems).replace("## Problems (ranked by impact)", `## ${title}`);
 }
 
 function problemsBlock(problems: PerformanceProblem[]): string {
@@ -200,23 +287,33 @@ function errorsBlock(errors?: ErrorEntry[]): string {
   ].join("\n");
 }
 
-function formatWidgetLine(w: {
-  name: string;
-  route: string;
-  ratePerSec: number;
-  share: number;
-  keyLabel?: string;
-  sourceUri?: string;
-  sourceLine?: number;
-  cause?: string;
-  duringJank?: boolean;
-  isFramework?: boolean;
-}): string {
+function formatWidgetLine(
+  w: {
+    name: string;
+    route: string;
+    ratePerSec: number;
+    share: number;
+    keyLabel?: string;
+    sourceUri?: string;
+    sourceLine?: number;
+    cause?: string;
+    duringJank?: boolean;
+    isFramework?: boolean;
+  },
+  heat?: { count: number; maxSeverity: PerformanceProblem["severity"] | null; score: number },
+): string {
   const parts = [
     `\`${w.name}\` on ${w.route}`,
     `${w.ratePerSec.toFixed(1)}/s`,
     `${w.share.toFixed(1)}% share`,
   ];
+  if (heat && heat.count > 0) {
+    parts.push(
+      `${heat.count} problem${heat.count === 1 ? "" : "s"}${heat.maxSeverity ? ` (${heat.maxSeverity})` : ""}`,
+    );
+  } else if (heat?.maxSeverity) {
+    parts.push(`pressure ${heat.maxSeverity}`);
+  }
   if (w.keyLabel) parts.push(`key ${w.keyLabel}`);
   if (w.sourceUri) parts.push(`${w.sourceUri}${w.sourceLine ? `:${w.sourceLine}` : ""}`);
   if (w.cause) parts.push(`cause ${w.cause}`);
@@ -225,31 +322,51 @@ function formatWidgetLine(w: {
   return `- ${parts.join(" · ")}`;
 }
 
-function widgetsBlock(hot?: HotWidgetsPayload | null, opts?: { appOnly?: boolean }): string {
+function widgetsBlock(
+  hot?: HotWidgetsPayload | null,
+  opts?: {
+    appOnly?: boolean;
+    /** Prefer widgets on hot.currentRoute (Widgets page / AI focus). */
+    currentRouteOnly?: boolean;
+    problems?: PerformanceProblem[];
+  },
+): string {
   const raw = hot?.widgets ?? [];
   let widgets = opts?.appOnly ? raw.filter((w) => !isFrameworkWidget(w)) : raw;
-  // Drop near-idle rows so the model cannot invent "HIGH" from 0.1–1.0/s shells.
-  if (opts?.appOnly) {
-    widgets = widgets.filter((w) => w.ratePerSec >= 3 || w.share >= 8);
+  if (opts?.currentRouteOnly && hot?.currentRoute) {
+    const onRoute = widgets.filter((w) => w.route === hot.currentRoute);
+    if (onRoute.length) widgets = onRoute;
   }
-  widgets = [...widgets].sort(
-    (a, b) => b.ratePerSec - a.ratePerSec || b.share - a.share,
-  );
-  if (!widgets.length) {
+  // Drop near-idle rows so the model cannot invent "HIGH" from 0.1–1.0/s shells —
+  // unless they already carry a matched problem.
+  if (opts?.appOnly) {
+    widgets = widgets.filter((w) => {
+      const heat = widgetHeat(w, opts.problems ?? []);
+      return heat.count > 0 || w.ratePerSec >= 3 || w.share >= 8;
+    });
+  }
+  const ranked = widgets
+    .map((w) => ({ w, heat: widgetHeat(w, opts?.problems ?? []) }))
+    .sort((a, b) =>
+      compareByHeatThenName({ heat: a.heat, name: a.w.name }, { heat: b.heat, name: b.w.name }),
+    );
+  if (!ranked.length) {
     return opts?.appOnly && raw.length
       ? "## App widget rebuilds\n_no meaningful app rebuild rate in this window; use screen totals below_"
       : "## Widget rebuilds\n_no widget data (probe may be missing)_";
   }
   const lines = [
     `## ${opts?.appOnly ? "App widget" : "Widget"} rebuilds (window ${((hot?.windowMs ?? 10000) / 1000).toFixed(0)}s)`,
-    "_Cite as `WidgetName` on `/route` (file:line when shown). Prefer app widgets; skip framework shells. Widgets under ~3/s are not primary causes of 100ms+ build._",
+    "_Cite as `WidgetName` on `/route` (file:line when shown). Prefer widgets with problems / high heat. Skip framework shells. Widgets under ~3/s without problems are not primary causes of 100ms+ build._",
   ];
   if (hot?.currentRoute) {
     lines.push(`- Current route/screen: **${hot.currentRoute}**`);
   }
-  lines.push(...widgets.slice(0, MAX.widgets).map(formatWidgetLine));
+  lines.push(
+    ...ranked.slice(0, MAX.widgets).map(({ w, heat }) => formatWidgetLine(w, heat)),
+  );
   const screens = hot?.screens ?? [];
-  if (screens.length) {
+  if (screens.length && !opts?.currentRouteOnly) {
     lines.push("", "### By screen / route (strongest scroll/interaction signal)");
     for (const s of screens.slice(0, 8)) {
       const tops = (s.topWidgets ?? [])
@@ -266,6 +383,30 @@ function widgetsBlock(hot?: HotWidgetsPayload | null, opts?: { appOnly?: boolean
     }
   }
   return lines.join("\n");
+}
+
+/** Problems that name a widget (or screen rebuild pressure) — for the Widgets AI brief. */
+function widgetProblemsBlock(problems: PerformanceProblem[], currentRoute?: string): string {
+  let list = problems.filter(
+    (p) =>
+      Boolean(p.widget) ||
+      p.kind === "hot_rebuild" ||
+      p.kind === "high_build" ||
+      p.kind === "high_raster" ||
+      p.kind === "scenario_jank",
+  );
+  if (currentRoute) {
+    const onRoute = list.filter((p) => !p.route || p.route === currentRoute);
+    if (onRoute.length) list = onRoute;
+  }
+  if (!list.length) {
+    return "## Widget problems on this screen\n_none ranked yet — interact with the UI or wait for rebuild pressure_";
+  }
+  // Reuse ranking lines from problemsBlock, but keep a Widgets-page heading.
+  return problemsBlock(list).replace(
+    "## Problems (ranked by impact)",
+    "## Widget problems on this screen (ranked by impact)",
+  );
 }
 
 function framesBlock(state: AiContextState): string {
@@ -285,7 +426,7 @@ function framesBlock(state: AiContextState): string {
   if (jank) lines.push(`- Jank ratio: ${(jank.value * 100).toFixed(0)}% (limit ${(jank.budget * 100).toFixed(0)}%)`);
   lines.push(`- Samples: ${state.points.length}`);
   if (point) {
-    lines.push(`- Latest frame: ${point.frameMs.toFixed(1)} ms · heap ${point.heapMb.toFixed(1)} MB`);
+    lines.push(`- Latest frame: ${point.frameMs.toFixed(1)} ms`);
     if (point.refreshRate) lines.push(`- Display: ${point.refreshRate} Hz`);
   }
   return lines.join("\n");
@@ -361,43 +502,166 @@ function reportBlock(state: AiContextState): string {
   });
 }
 
-/** A compact Markdown brief of the current section for the model. */
+/**
+ * Compact Markdown brief for the model — only data that belongs on this tab.
+ * Problems/Report stay cross-cutting; every other section is track-scoped.
+ */
 export function buildSectionContext(section: AiSection, state: AiContextState): string {
-  const blocks: string[] = [sessionBlock(state)];
+  const frameProblems = problemsOnTrack(state.problems, "frame");
+  const networkProblems = problemsOnTrack(state.problems, "network");
+  const memoryProblems = problemsOnTrack(state.problems, "memory");
+  const hotWidgets =
+    (state.hot?.widgets?.length ?? 0) > 0
+      ? widgetsBlock(state.hot, { appOnly: true, problems: state.problems })
+      : null;
+
   switch (section) {
     case "problems":
-      blocks.push(
+      return [
+        sessionBlock(state),
         problemsBlock(state.problems),
         errorsBlock(state.errors),
         framesBlock(state),
         networkBlock(state.network),
-      );
-      break;
+        hotWidgets,
+      ]
+        .filter(Boolean)
+        .join("\n\n");
     case "widgets":
-      blocks.push(widgetsBlock(state.hot));
-      break;
+      return [
+        sessionBlock(state, {
+          problems: frameProblems,
+          title: "Widget rebuild health (this screen)",
+          note: "Out of scope here: Network, CPU, Memory — use those tabs (or Problems) instead.",
+        }),
+        widgetProblemsBlock(state.problems, state.hot?.currentRoute),
+        widgetsBlock(state.hot, {
+          appOnly: true,
+          currentRouteOnly: true,
+          problems: state.problems,
+        }),
+      ].join("\n\n");
     case "frames":
-      blocks.push(framesBlock(state));
-      break;
+      return [
+        sessionBlock(state, {
+          problems: frameProblems,
+          title: "Frame budget health",
+          note: "Out of scope here: HTTP latency and memory — use Network / Memory tabs.",
+        }),
+        framesBlock(state),
+        scopedProblemsBlock(
+          "Frame problems (ranked)",
+          frameProblems,
+          "none on the frame track",
+        ),
+        hotWidgets,
+      ]
+        .filter(Boolean)
+        .join("\n\n");
     case "cpu":
-      blocks.push(cpuBlock(state.cpuProfile));
-      break;
+      return [
+        sessionBlock(state, {
+          problems: cpuProblems(state.problems),
+          title: "CPU health",
+          note: "Out of scope here: HTTP latency and memory — use Network / Memory tabs.",
+        }),
+        cpuBlock(state.cpuProfile),
+        scopedProblemsBlock(
+          "CPU problems (ranked)",
+          cpuProblems(state.problems),
+          "no cpu_hotspot problems ranked",
+        ),
+        // Rebuild evidence helps explain UI-related self-time when present.
+        hotWidgets,
+      ]
+        .filter(Boolean)
+        .join("\n\n");
     case "memory":
-      blocks.push(memoryBlock(state));
-      break;
+      return [
+        sessionBlock(state, {
+          problems: memoryProblems,
+          title: "Memory health",
+          note: "Out of scope here: rebuilds, frames, and HTTP — use those tabs.",
+          includeBudgets: false,
+        }),
+        memoryBlock(state),
+        scopedProblemsBlock(
+          "Memory problems (ranked)",
+          memoryProblems,
+          "none on the memory track",
+        ),
+      ].join("\n\n");
     case "network":
-      blocks.push(networkBlock(state.network));
-      break;
+      return [
+        sessionBlock(state, {
+          problems: networkProblems,
+          title: "Network / latency health",
+          note: "Out of scope here: widget rebuilds, frame budgets, and CPU — use those tabs.",
+          includeBudgets: false,
+        }),
+        networkBlock(state.network),
+        scopedProblemsBlock(
+          "Network problems (ranked)",
+          networkProblems,
+          "no slow HTTP problems ranked",
+        ),
+      ].join("\n\n");
     case "report":
-      blocks.push(reportBlock(state));
-      break;
+      return [sessionBlock(state), reportBlock(state)].join("\n\n");
   }
-  // Cross-cutting app widget/route evidence (skip framework noise for the model).
-  if (section !== "widgets" && section !== "report" && (state.hot?.widgets?.length ?? 0) > 0) {
-    blocks.push(widgetsBlock(state.hot, { appOnly: true }));
-  }
-  return blocks.join("\n\n");
 }
+
+const SECTION_SCOPE_RULES: Record<AiSection, string[]> = {
+  problems: [
+    "This is the Problems tab — review ranked issues across tracks that appear in the brief.",
+    "Still separate frame vs network vs memory; do not collapse Slow HTTP into build-ms blame.",
+  ],
+  widgets: [
+    "This is the Widgets tab — stay on rebuilds and widget problems.",
+    "Do not discuss Slow HTTP, CPU profiles, heap/leaks, retries, or debounce-of-POST advice.",
+    "If the rebuild list is empty or quiet, say so; do not invent widget names or fill with other-tab topics.",
+  ],
+  frames: [
+    "This is the Frames tab — stay on build/raster/jank and frame-track problems.",
+    "Do not review HTTP latency or memory growth/leaks.",
+  ],
+  cpu: [
+    "This is the CPU tab — stay on hotspot self-time and cpu_hotspot problems.",
+    "Do not review HTTP latency or memory; mention widgets only if listed in the brief.",
+  ],
+  memory: [
+    "This is the Memory tab — stay on heap growth, leaks, and image cache.",
+    "Do not review widget rebuilds, frame budgets, or HTTP.",
+  ],
+  network: [
+    "This is the Network tab — stay on HTTP latency and slow requests.",
+    "Do not review widget rebuilds, frame budgets, or CPU hotspots.",
+  ],
+  report: [
+    "This is the Report tab — whole-session review across tracks present in the brief.",
+  ],
+};
+
+const SECTION_SUMMARY_RULE: Record<AiSection, string> = {
+  problems: "1. ## Summary — 2–3 sentences on session health and the main risk (name the track: frame vs network vs memory)",
+  widgets:
+    "1. ## Summary — 2–3 sentences on rebuild/widget health on this screen (not other tabs)",
+  frames: "1. ## Summary — 2–3 sentences on frame-budget health (build/raster/jank)",
+  cpu: "1. ## Summary — 2–3 sentences on CPU hotspot risk from the profile",
+  memory: "1. ## Summary — 2–3 sentences on heap/leak/image-cache risk",
+  network: "1. ## Summary — 2–3 sentences on HTTP latency / UX wait risk",
+  report: "1. ## Summary — 2–3 sentences on whole-session health and the main risk (name the track)",
+};
+
+const SECTION_FINDINGS_RULE: Record<AiSection, string> = {
+  problems: "2. ## Findings — up to 5 bullets with measured evidence (widget + route when relevant)",
+  widgets: "2. ## Findings — up to 5 bullets with widget + route + rebuild evidence",
+  frames: "2. ## Findings — up to 5 bullets with frame metrics and related widgets when listed",
+  cpu: "2. ## Findings — up to 5 bullets with hotspot names and self-time %",
+  memory: "2. ## Findings — up to 5 bullets with class/image names and byte evidence",
+  network: "2. ## Findings — up to 5 bullets with method + URI + latency ms",
+  report: "2. ## Findings — up to 5 bullets with measured evidence across tracks",
+};
 
 export function systemPrompt(section: AiSection, language: AiLanguage): string {
   const lang =
@@ -407,6 +671,7 @@ export function systemPrompt(section: AiSection, language: AiLanguage): string {
   return [
     "You are a senior Flutter performance engineer reviewing a live PulseFlow session.",
     "Use ONLY the measurements below; never invent widgets, routes, file paths, libraries, APIs, or numbers. If data is missing, say so.",
+    "Stay strictly on this tab's topic — do not import findings from other PulseFlow tabs unless they appear in the brief.",
     "Be concise and skeptical of exaggeration — prefer understatement over drama.",
     "Always finish a complete answer — never stop mid-sentence, mid-list, or mid-heading.",
     "Accuracy rules:",
@@ -418,12 +683,13 @@ export function systemPrompt(section: AiSection, language: AiLanguage): string {
     "- Do not multiply relatedBuild / session build cost across widgets; that cost is frame-wide when present.",
     "- Do not blame SvgPicture/GC for frame jank unless image/memory metrics in the brief support it.",
     "- Cap ## Findings at 5 bullets and ## Fixes at 3. Rank by measured impact. Do not invent Hive/dio interceptors/etc. unless the brief already mentions them.",
+    ...SECTION_SCOPE_RULES[section],
     "When citing UI issues, name them as `WidgetName` on `/route` and include `file:line` when present.",
     "Structure every answer with these Markdown headings, in order:",
-    "1. ## Summary — 2–3 sentences on session health and the main risk (name the track: frame vs network)",
-    "2. ## Findings — up to 5 bullets with widget + route + measured evidence",
-    "3. ## Fixes — up to 3, ranked by impact, with concrete Flutter changes grounded in the data",
-    "4. ## Verify — what to re-measure in PulseFlow after the fix",
+    SECTION_SUMMARY_RULE[section],
+    SECTION_FINDINGS_RULE[section],
+    "3. ## Fixes — up to 3, ranked by impact, with concrete changes grounded in the data",
+    "4. ## Verify — what to re-measure in PulseFlow after the fix (prefer this same tab)",
     "Close with one clear next step. Keep tone professional and actionable; avoid fluff.",
     `Focus on ${SECTION_HINTS[section]}.`,
     lang,
@@ -444,7 +710,7 @@ export function buildChatMessages(
     if (turn.role === "system") continue;
     messages.push({ role: turn.role, content: turn.content });
   }
-  const ask = question?.trim() || DEFAULT_QUESTION;
+  const ask = question?.trim() || SECTION_DEFAULT_QUESTION[section];
   messages.push({
     role: "user",
     content: `Current PulseFlow “${SECTION_TITLES[section]}” data:\n\n${context}\n\n---\n${ask}`,

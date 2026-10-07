@@ -7,7 +7,7 @@ import { Copy, Sparkles, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   buildSectionContext,
-  QUICK_PROMPTS,
+  SECTION_QUICK_PROMPTS,
   SECTION_TITLES,
   sectionFromPath,
   type ChatMessage,
@@ -293,7 +293,7 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
 
             {turns.length > 0 && (
               <div className="flex flex-wrap gap-1.5 border-t border-white/10 px-4 pt-3">
-                {Object.values(QUICK_PROMPTS).map((prompt) => (
+                {SECTION_QUICK_PROMPTS[section].map((prompt) => (
                   <button
                     key={prompt}
                     type="button"

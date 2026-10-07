@@ -22,10 +22,7 @@ export interface ShareSnapshot {
   mode: string;
   isolateName?: string;
   /** Lean metric points (sampled to keep the URL small). */
-  points: Pick<
-    MetricPoint,
-    "t" | "frameMs" | "buildMs" | "rasterMs" | "jank" | "heapMb" | "refreshRate" | "buildBudgetMs"
-  >[];
+  points: MetricPoint[];
   problems: PerformanceProblem[];
   hot: HotWidgetsPayload | null;
   probeFrozen: boolean;
@@ -87,11 +84,15 @@ export function buildSnapshot(view: {
     isolateName: view.isolateName,
     points: view.points.slice(-MAX_POINTS).map((p) => ({
       t: p.t,
-      frameMs: p.frameMs,
-      buildMs: p.buildMs,
-      rasterMs: p.rasterMs,
+      cpu: p.cpu ?? 0,
+      framePressure: p.framePressure ?? p.cpu ?? 0,
+      frameMs: p.frameMs ?? 0,
+      buildMs: p.buildMs ?? 0,
+      rasterMs: p.rasterMs ?? 0,
+      vsyncMs: p.vsyncMs ?? 0,
       jank: p.jank,
-      heapMb: p.heapMb,
+      heapMb: p.heapMb ?? 0,
+      externalMb: p.externalMb ?? 0,
       refreshRate: p.refreshRate,
       buildBudgetMs: p.buildBudgetMs,
     })),
@@ -125,10 +126,26 @@ export function baselinesFromSnapshot(snap: ShareSnapshot): SessionBaseline[] {
 
 const HASH_PREFIX = "s=";
 
+/** base64-encode a UTF-8 string in a way that works in browsers and Node. */
+function encodeBase64(str: string): string {
+  const bytes = new TextEncoder().encode(str);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
+}
+
+/** Decodes a base64 string that was produced by `encodeBase64`. */
+function decodeBase64(b64: string): string {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+}
+
 /** Encodes a snapshot into a URL hash string: `#s=<base64json>`. */
 export function snapshotToHash(snap: ShareSnapshot): string {
   const json = JSON.stringify(snap);
-  const b64 = btoa(json);
+  const b64 = encodeBase64(json);
   return `#${HASH_PREFIX}${b64}`;
 }
 
@@ -137,7 +154,7 @@ export function snapshotFromHash(hash: string): ShareSnapshot | null {
   try {
     const match = hash.match(/#s=([^&]+)/);
     if (!match) return null;
-    const json = atob(match[1]);
+    const json = decodeBase64(match[1]);
     const obj = JSON.parse(json);
     if (obj && obj.v === 1) return obj as ShareSnapshot;
   } catch {

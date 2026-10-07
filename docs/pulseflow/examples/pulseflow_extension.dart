@@ -1,13 +1,11 @@
-// PulseFlow extensions stub
-// Paste into your Flutter app (e.g. lib/pulseflow_extension.dart) and call
-// `registerPulseFlowExtensions()` from `main()` before `runApp`.
+// LEGACY stub — prefer package:pulseflow_flutter (`registerPulseFlow()`).
+// Kept only for apps that still paste this single file. New work lands in
+// ../pulseflow_flutter (RebuildProbe + service extensions).
 //
 // After hot-restart, PulseFlow can:
 // - run stress RPCs
 // - sample hot widgets via rebuild counts (debug/profile only)
 // - run repeatable lab scenarios (scroll/route/list/animation/memory)
-//
-// Structured so this file can later become a pub package (sections below).
 
 import 'dart:async';
 import 'dart:convert';
@@ -282,6 +280,119 @@ class _WidgetProbe {
     }
   }
 
+  String _aggregateKey(String route, String name, String? keyLabel) =>
+      '$route|$name|${keyLabel ?? ''}';
+
+  /// Prefer a live Navigator/Router location; fall back to last rebuild route.
+  String? _detectLiveRoute() {
+    try {
+      final root = WidgetsBinding.instance.rootElement;
+      if (root != null) {
+        String? fromRouter;
+        String? fromModal;
+        void visitor(Element el) {
+          if (fromRouter != null && fromModal != null) return;
+          try {
+            final provider = Router.maybeOf(el)?.routeInformationProvider;
+            if (provider != null && fromRouter == null) {
+              final path = provider.value.uri.path;
+              fromRouter = path.isEmpty ? '/' : path;
+            }
+          } catch (_) {}
+          try {
+            final modal = ModalRoute.of(el);
+            final named = modal?.settings.name;
+            if (named != null && named.isNotEmpty && fromModal == null) {
+              fromModal = named;
+            }
+          } catch (_) {}
+          el.visitChildren(visitor);
+        }
+
+        root.visitChildren(visitor);
+        if (fromModal != null && fromModal != '/') return fromModal;
+        if (fromRouter != null && fromRouter != '/') return fromRouter;
+        if (fromModal != null) return fromModal;
+        if (fromRouter != null) return fromRouter;
+      }
+    } catch (_) {}
+    return currentRoute;
+  }
+
+  /// Walk the mounted element tree for [route], merging rebuild counters.
+  /// Nodes stay present while mounted — not only while rebuilding.
+  List<Map<String, dynamic>> _walkRouteTree({
+    required String route,
+    required DateTime now,
+    required double windowSec,
+    required Map<String, _WidgetEntry> rebuildByKey,
+    int maxNodes = 500,
+  }) {
+    final root = WidgetsBinding.instance.rootElement;
+    if (root == null) return <Map<String, dynamic>>[];
+
+    final nodes = <Map<String, dynamic>>[];
+    var totalWindowForShare = 0;
+    for (final e in rebuildByKey.values) {
+      if (e.route == route) totalWindowForShare += e.hits.length;
+    }
+
+    void visit(Element el, String? parentId, int depth, bool underRoute) {
+      if (nodes.length >= maxNodes) return;
+      final name = el.widget.runtimeType.toString();
+      final keyLabel = _keyLabel(el.widget.key);
+      final elRoute = _routeOf(el);
+      final onRoute = elRoute == route;
+      final include = underRoute || onRoute;
+
+      String? nodeId;
+      if (include) {
+        nodeId = 'n${identityHashCode(el)}';
+        final aggKey = _aggregateKey(route, name, keyLabel);
+        final entry = rebuildByKey[aggKey];
+        final windowCount = entry?.hits.length ?? 0;
+        final session = entry?.session ?? 0;
+        final lastSeenRaw =
+            entry == null ? 0 : now.difference(entry.lastSeen).inMilliseconds;
+        final lastSeenMs = lastSeenRaw < 0 ? 0 : lastSeenRaw;
+        final depthForNode = underRoute ? depth : 0;
+        nodes.add(<String, dynamic>{
+          'id': nodeId,
+          'name': name,
+          'route': route,
+          if (keyLabel != null) 'keyLabel': keyLabel,
+          if (parentId != null) 'parentId': parentId,
+          'depth': depthForNode,
+          'inTree': true,
+          'rebuildsSession': session,
+          'rebuildsWindow': windowCount,
+          'ratePerSec': windowCount > 0
+              ? double.parse((windowCount / windowSec).toStringAsFixed(2))
+              : 0.0,
+          'share': totalWindowForShare > 0
+              ? double.parse(
+                  ((windowCount / totalWindowForShare) * 100).toStringAsFixed(1),
+                )
+              : 0.0,
+          'lastSeenMs': lastSeenMs,
+          'isFramework': _isFrameworkWidgetName(name),
+        });
+      }
+
+      final nextUnder = underRoute || onRoute;
+      final nextDepth = nextUnder ? (underRoute ? depth + 1 : 1) : depth;
+      final nextParent = include ? nodeId : parentId;
+      el.visitChildren((child) {
+        visit(child, nextParent, nextDepth, nextUnder);
+      });
+    }
+
+    root.visitChildren((child) {
+      visit(child, null, 0, false);
+    });
+    return nodes;
+  }
+
   Map<String, dynamic> snapshot({int limit = 40}) {
     final now = DateTime.now();
     final cutoff = now.subtract(const Duration(milliseconds: _windowMs));
@@ -290,6 +401,23 @@ class _WidgetProbe {
     }
 
     final windowSec = _windowMs / 1000.0;
+    final liveRoute = _detectLiveRoute();
+    if (liveRoute != null) currentRoute = liveRoute;
+
+    final rebuildByKey = Map<String, _WidgetEntry>.from(entries);
+
+    // Prefer the stable mounted tree for the current screen.
+    List<Map<String, dynamic>> tree = <Map<String, dynamic>>[];
+    if (currentRoute != null && currentRoute!.isNotEmpty) {
+      tree = _walkRouteTree(
+        route: currentRoute!,
+        now: now,
+        windowSec: windowSec,
+        rebuildByKey: rebuildByKey,
+        maxNodes: limit < 100 ? 500 : limit,
+      );
+    }
+
     final widgetMaps = <Map<String, dynamic>>[];
     var totalWindow = 0;
     var totalSession = 0;
@@ -310,6 +438,7 @@ class _WidgetProbe {
             windowCount > 0 ? double.parse((windowCount / windowSec).toStringAsFixed(2)) : 0.0,
         'lastSeenMs': lastSeenMs < 0 ? 0 : lastSeenMs,
         'isFramework': _isFrameworkWidgetName(entry.name),
+        'inTree': false,
       });
     }
 
@@ -330,8 +459,11 @@ class _WidgetProbe {
       };
     }).toList();
 
+    // UI primary list: mounted tree when available, else hot rebuild ranks.
+    final primary = tree.isNotEmpty ? tree : top;
+
     final byRoute = <String, List<Map<String, dynamic>>>{};
-    for (final w in top) {
+    for (final w in primary) {
       final route = w['route'] as String;
       byRoute.putIfAbsent(route, () => <Map<String, dynamic>>[]).add(w);
     }
@@ -349,7 +481,10 @@ class _WidgetProbe {
         'share': totalWindow > 0
             ? double.parse(((rebuildsWindow / totalWindow) * 100).toStringAsFixed(1))
             : 0.0,
-        'topWidgets': routeWidgets.take(5).toList(),
+        'topWidgets': routeWidgets
+            .where((w) => (w['rebuildsWindow'] as int) > 0)
+            .take(5)
+            .toList(),
       };
     }).toList()
       ..sort((a, b) =>
@@ -365,7 +500,8 @@ class _WidgetProbe {
       // Back-compat for older bridge builds
       'totalRebuilds': totalWindow,
       'currentRoute': currentRoute,
-      'widgets': top,
+      'widgets': primary,
+      'tree': tree,
       'screens': screens,
     };
   }

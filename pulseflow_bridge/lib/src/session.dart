@@ -361,6 +361,7 @@ class BridgeSession {
     track(service.onExtensionEvent, _handleExtensionEvent);
     track(service.onGCEvent, _handleGcEvent);
     track(service.onTimelineEvent, _handleTimelineEvent);
+    track(service.onLoggingEvent, _handleLogEvent);
     unawaited(service.onDone.then((_) {
       if (_vm == service) {
         _pollTimer?.cancel();
@@ -408,7 +409,7 @@ class BridgeSession {
     if (frameMs > _budgetMs) _pushMarker('jank', 'Jank frame ${frameMs.toStringAsFixed(1)} ms');
   }
 
-  void _handleTimelineEvent(vm.Event event) {
+   void _handleTimelineEvent(vm.Event event) {
     for (final vm.TimelineEvent te in event.timelineEvents ?? const <vm.TimelineEvent>[]) {
       final Map<String, dynamic>? json = te.json;
       final String name = '${json?['name'] ?? ''}';
@@ -432,6 +433,38 @@ class BridgeSession {
     }
   }
 
+  /// package:logging severity levels (see package:logging `Level`).
+  static String _levelName(int level) {
+    if (level >= 1200) return 'severe';
+    if (level >= 1000) return 'error';
+    if (level >= 900) return 'warning';
+    if (level >= 800) return 'info';
+    return 'debug';
+  }
+
+  void _handleLogEvent(vm.Event event) {
+    final vm.LogRecord? record = event.logRecord;
+    if (record == null) return;
+    // Cap in-flight log buffer so the dashboard stays responsive.
+    final int t = event.timestamp != null && event.timestamp! > 0
+        ? event.timestamp!
+        : (record.time ?? DateTime.now().millisecondsSinceEpoch);
+    final String message = record.message?.valueAsString ?? '';
+    if (message.isEmpty) return;
+    final String level = _levelName(record.level ?? 0);
+    _send(<String, Object?>{
+      'type': 'log',
+      'entry': <String, Object?>{
+        't': t,
+        'level': level,
+        'severity': record.level ?? 0,
+        'message': message,
+        if (record.loggerName?.valueAsString != null) 'loggerName': record.loggerName!.valueAsString,
+        if (record.sequenceNumber != null) 'seq': record.sequenceNumber,
+      },
+    });
+  }
+
   Future<String> _resolveIsolate() async {
     final vm.VM info = await _vm!.getVM();
     final List<vm.IsolateRef> isolates = info.isolates ?? <vm.IsolateRef>[];
@@ -450,7 +483,7 @@ class BridgeSession {
   }
 
   Future<void> _listenStreams() async {
-    for (final String streamId in <String>['Extension', 'GC', 'Timeline']) {
+    for (final String streamId in <String>['Extension', 'GC', 'Timeline', 'Logging']) {
       try {
         await _vm!.streamListen(streamId);
       } catch (_) {}
@@ -885,7 +918,7 @@ class BridgeSession {
     }
     try {
       final Map<String, dynamic>? data =
-          await _callExtension('ext.pulseflow.getHotWidgets', args: <String, dynamic>{'limit': '40'});
+          await _callExtension('ext.pulseflow.getHotWidgets', args: <String, dynamic>{'limit': '500'});
       if (data == null) return;
       final int windowMs = (data['windowMs'] as num?)?.toInt() ?? 10000;
       final bool duringJank = lastFrameMs > _budgetMs;
@@ -898,8 +931,13 @@ class BridgeSession {
       final List<Map<String, Object?>> widgets = rawWidgets
           .map((Map<String, dynamic> w) => _mapWidgetStat(w, totalWindow, windowMs, duringJank))
           .toList();
+      final List<Map<String, Object?>> tree = ((data['tree'] as List<dynamic>?) ?? <dynamic>[])
+          .whereType<Map>()
+          .map((Map m) => _mapWidgetStat(m.cast<String, dynamic>(), totalWindow, windowMs, duringJank))
+          .toList();
+      final List<Map<String, Object?>> primary = tree.isNotEmpty ? tree : widgets;
       final List<Map<String, Object?>> screens =
-          _mapScreens(data, widgets, totalWindow, windowMs, duringJank);
+          _mapScreens(data, primary, totalWindow, windowMs, duringJank);
       _widgetProbeAvailable = true;
       final Map<String, Object?> payload = <String, Object?>{
         'type': 'hotWidgets',
@@ -909,11 +947,12 @@ class BridgeSession {
         'totalRebuildsSession': totalSession,
         'totalRebuilds': totalWindow,
         if (data['currentRoute'] != null) 'currentRoute': '${data['currentRoute']}',
-        'widgets': widgets,
+        'widgets': primary,
+        if (tree.isNotEmpty) 'tree': tree,
         'screens': screens,
         'frozen': (data['frozen'] == true) || _hotWidgetsFrozen,
         'duringJank': duringJank,
-        if (totalWindow == 0) 'message': 'Sampling rebuilds — interact with the UI',
+        if (primary.isEmpty) 'message': 'Sampling widget tree — open a screen in the app',
       };
       _lastHotPayload = payload;
       _send(payload);
@@ -1016,6 +1055,9 @@ class BridgeSession {
       'lastSeenMs': (raw['lastSeenMs'] as num?)?.toInt() ?? 0,
       'isFramework': raw['isFramework'] == true,
       'duringJank': raw['duringJank'] == true || duringJank,
+      if (raw['parentId'] != null) 'parentId': '${raw['parentId']}',
+      if (raw['depth'] != null) 'depth': (raw['depth'] as num).toInt(),
+      if (raw['inTree'] != null) 'inTree': raw['inTree'] == true,
     };
   }
 
@@ -1996,6 +2038,7 @@ class BridgeSession {
     _emitMockRebuildCauses();
     _emitMockErrors();
     _emitMockImages();
+    _emitMockLogs();
     _mockTimer = Timer.periodic(const Duration(milliseconds: 500), (_) => _emitMockMetrics());
     _hotTimer = Timer.periodic(const Duration(milliseconds: 1000), (_) {
       _emitMockHotWidgets();
@@ -2234,6 +2277,46 @@ class BridgeSession {
         },
       ],
     });
+  }
+
+  final List<Map<String, Object?>> _mockLogSequence = <Map<String, Object?>>[
+    <String, Object?>{
+      "t": DateTime(2026, 1, 1).millisecondsSinceEpoch,
+      "level": "debug",
+      "severity": 500,
+      "loggerName": "main",
+      "message": "PulseFlow attached — monitoring 3 isolates",
+    },
+    <String, Object?>{
+      "t": DateTime(2026, 1, 1).millisecondsSinceEpoch,
+      "level": "info",
+      "severity": 800,
+      "loggerName": "flutter.ui",
+      "message": "I/surface: skipping frame as the surface is not available",
+    },
+    <String, Object?>{
+      "t": DateTime(2026, 1, 1).millisecondsSinceEpoch,
+      "level": "warning",
+      "severity": 900,
+      "loggerName": "dart",
+      "message": "This widget creates a RepaintBoundary but also receives non-zero translation offsets",
+    },
+    <String, Object?>{
+      "t": DateTime(2026, 1, 1).millisecondsSinceEpoch,
+      "level": "error",
+      "severity": 1000,
+      "loggerName": "main",
+      "message": "MissingPluginException(No implementation found for method getBatteryLevel)",
+    },
+  ];
+
+  void _emitMockLogs() {
+    for (final Map<String, Object?> entry in _mockLogSequence) {
+      _send(<String, Object?>{
+        "type": "log",
+        "entry": entry,
+      });
+    }
   }
 
   void _mockHotWidgetsControl(String action) {

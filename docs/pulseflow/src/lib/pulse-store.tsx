@@ -36,6 +36,7 @@ import type {
   HotWidgetsPayload,
   ImageCacheStats,
   LeakEntry,
+  LogMessage,
   MemoryDiff,
   MemorySnapshot,
   MetricPoint,
@@ -138,6 +139,8 @@ type PulseContextValue = {
   memoryDiff: MemoryDiff | null;
   retainingPath: RetainingPathNode[] | null;
   memoryMessage?: string;
+  logs: LogMessage[];
+  logMessage?: string;
   timelineMarkers: TimelineMarker[];
   timelineMessage?: string;
   leaks: LeakEntry[];
@@ -176,6 +179,7 @@ type PulseContextValue = {
     action: "report" | "start" | "stop" | "reset",
     opts?: { threshold?: number; limit?: number },
   ) => void;
+  logControl: (action: "clear") => void;
   setDebugOption: (id: DebugOptionId, enabled: boolean) => void;
   refreshDebugOptions: () => void;
   captureBaseline: (label: string) => void;
@@ -225,6 +229,8 @@ export function PulseProvider({ children }: { children: ReactNode }) {
   const [memoryMessage, setMemoryMessage] = useState<string>();
   const [timelineMarkers, setTimelineMarkers] = useState<TimelineMarker[]>([]);
   const [timelineMessage, setTimelineMessage] = useState<string>();
+  const [logs, setLogs] = useState<LogMessage[]>([]);
+  const [logMessage, setLogMessage] = useState<string>();
   const [leaks, setLeaks] = useState<LeakEntry[]>([]);
   const [rebuildCauses, setRebuildCauses] = useState<RebuildCausesState | null>(null);
   const [appErrors, setAppErrors] = useState<ErrorEntry[]>([]);
@@ -278,6 +284,15 @@ export function PulseProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     scenarioResultRef.current = scenarioResult;
   }, [scenarioResult]);
+
+  // Sync a restored shared view when the URL hash changes (e.g. user opens a link).
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const sync = () => setSharedView(snapshotFromHash(window.location.hash));
+    sync();
+    window.addEventListener("hashchange", sync);
+    return () => window.removeEventListener("hashchange", sync);
+  }, []);
   useEffect(() => {
     scenarioRunningRef.current = scenarioRunning;
   }, [scenarioRunning]);
@@ -317,6 +332,8 @@ export function PulseProvider({ children }: { children: ReactNode }) {
     setMemoryMessage(undefined);
     setTimelineMarkers([]);
     setTimelineMessage(undefined);
+    setLogs([]);
+    setLogMessage(undefined);
     setLeaks([]);
     setRebuildCauses(null);
     setAppErrors([]);
@@ -505,6 +522,23 @@ export function PulseProvider({ children }: { children: ReactNode }) {
           case "buildInfo":
             setBuildInfo({ buildMode: msg.buildMode, probes: msg.probes ?? {} });
             break;
+          case "log": {
+            const raw = msg.entry;
+            setLogs((prev) => {
+              const entry: LogMessage = {
+                id: `${raw.t}-${raw.seq ?? prev.length}-${prev.length}`,
+                t: raw.t,
+                level: raw.level,
+                severity: raw.severity,
+                message: raw.message,
+                loggerName: raw.loggerName,
+              };
+              const next = [...prev, entry];
+              const MAX_LOGS = 500;
+              return next.length > MAX_LOGS ? next.slice(next.length - MAX_LOGS) : next;
+            });
+            break;
+          }
           case "debugOptions":
             setDebugOptions(msg.options ?? []);
             if (msg.message) setDebugOptionsMessage(msg.message);
@@ -746,6 +780,16 @@ export function PulseProvider({ children }: { children: ReactNode }) {
     [send],
   );
 
+  const logControl = useCallback(
+    (action: "clear") => {
+      if (action === "clear") {
+        setLogs([]);
+        setLogMessage("Log buffer cleared");
+      }
+    },
+    [],
+  );
+
   const refreshDebugOptions = useCallback(
     () => send(() => clientRef.current?.send({ type: "debugOptions", action: "get" })),
     [send],
@@ -777,6 +821,46 @@ export function PulseProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const clearBaselines = useCallback(() => setBaselines([]), []);
+
+  const shareView = useCallback(async () => {
+    const snap = buildSnapshot({
+      mode,
+      isolateName,
+      points: pointsRef.current,
+      hot: hotRef.current,
+      hotAvailable,
+      gcEvents: gcRef.current,
+      cpuProfile: cpuRef.current,
+      memoryDiff: memoryDiffRef.current,
+      network: networkRef.current,
+      scenarioResult: scenarioResultRef.current,
+      scenarioRunning: scenarioRunningRef.current,
+      probeFrozen,
+      baselines,
+      controlMessage,
+    });
+    try {
+      const url = shareableUrl(snap);
+      await navigator.clipboard.writeText(url);
+      setControlMessage("Share link copied — the view is also live at this URL");
+    } catch (e) {
+      setControlMessage(`Could not copy link: ${e instanceof Error ? e.message : "blocked"}`);
+    }
+  }, [
+    mode,
+    isolateName,
+    hotAvailable,
+    probeFrozen,
+    baselines,
+    controlMessage,
+  ]);
+
+  const clearShared = useCallback(() => {
+    setSharedView(null);
+    if (typeof window !== "undefined") {
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
+  }, []);
 
   const value = useMemo<PulseContextValue>(
     () => ({
@@ -828,6 +912,12 @@ export function PulseProvider({ children }: { children: ReactNode }) {
       baselines,
       debugOptions,
       debugOptionsMessage,
+      sharedView,
+      shareView,
+      clearShared,
+      logs,
+      logMessage,
+      logControl,
       connect,
       disconnect,
       mock,
@@ -900,6 +990,12 @@ export function PulseProvider({ children }: { children: ReactNode }) {
       baselines,
       debugOptions,
       debugOptionsMessage,
+      sharedView,
+      shareView,
+      clearShared,
+      logs,
+      logMessage,
+      logControl,
       connect,
       disconnect,
       mock,

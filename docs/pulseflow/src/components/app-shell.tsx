@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { PanelLeft, Sparkles, Unplug } from "lucide-react";
+import { PanelLeft, Share2, Sparkles, Unplug } from "lucide-react";
 import { AiDrawer } from "@/components/ai-drawer";
 import { DevicePane } from "@/components/device-pane";
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +21,7 @@ const NAV = [
   { href: "/cpu", label: "CPU" },
   { href: "/memory", label: "Memory" },
   { href: "/network", label: "Network" },
+  { href: "/logs", label: "Logs" },
   { href: "/tools", label: "Tools" },
   { href: "/report", label: "Report" },
   { href: "/history", label: "History" },
@@ -48,6 +49,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     isolateName,
     disconnect,
     points,
+    sharedView,
+    shareView,
   } = usePulse();
 
   useEffect(() => {
@@ -157,10 +160,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               {mode === "mock" && connected ? "demo mode" : status}
             </Badge>
             {!bridgeReady && <Badge variant="idle">bridge…</Badge>}
+            {sharedView && (
+              <Badge variant="default" className="border-amber-400/30 bg-amber-500/10 text-amber-200">
+                shared view (read-only)
+              </Badge>
+            )}
             {connected && (
               <Button size="sm" variant="outline" onClick={() => setAiOpen(true)}>
                 <Sparkles className="h-3.5 w-3.5" />
                 Ask AI
+              </Button>
+            )}
+            {connected && !sharedView && (
+              <Button size="sm" variant="outline" onClick={shareView} title="Copy a shareable link to this view">
+                <Share2 className="h-3.5 w-3.5" />
+                Share
               </Button>
             )}
             {connected && (

@@ -5,16 +5,16 @@ import { useRouter } from "next/navigation";
 import { usePulse } from "@/lib/pulse-store";
 
 export function RequireConnected({ children }: { children: React.ReactNode }) {
-  const { connected } = usePulse();
+  const { connected, sharedView } = usePulse();
   const router = useRouter();
 
   useEffect(() => {
-    if (!connected) {
+    if (!connected && !sharedView) {
       router.replace("/");
     }
-  }, [connected, router]);
+  }, [connected, sharedView, router]);
 
-  if (!connected) {
+  if (!connected && !sharedView) {
     return (
       <p className="text-sm text-[var(--ink-faint)]">Redirecting to connect…</p>
     );

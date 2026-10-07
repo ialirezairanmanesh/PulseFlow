@@ -76,4 +76,42 @@ describe("normalizeHotWidgetsMessage", () => {
     const out = normalizeHotWidgetsMessage(msg);
     expect(out.widgets[0].isFramework).toBe(true);
   });
+
+  it("prefers the mounted tree over flat rebuild ranks", () => {
+    const msg = {
+      type: "hotWidgets",
+      available: true,
+      windowMs: 10000,
+      currentRoute: "/invoices",
+      widgets: [{ name: "HotOnly", route: "/invoices", rebuildsWindow: 99 }],
+      tree: [
+        {
+          id: "n1",
+          name: "InvoicePage",
+          route: "/invoices",
+          depth: 0,
+          inTree: true,
+          rebuildsWindow: 0,
+          parentId: undefined,
+        },
+        {
+          id: "n2",
+          name: "InvoiceCard",
+          route: "/invoices",
+          depth: 1,
+          inTree: true,
+          rebuildsWindow: 4,
+          parentId: "n1",
+        },
+      ],
+    } as unknown as BridgeHotWidgetsMessage;
+
+    const out = normalizeHotWidgetsMessage(msg);
+    expect(out.tree).toHaveLength(2);
+    expect(out.widgets).toHaveLength(2);
+    expect(out.widgets[0].name).toBe("InvoicePage");
+    expect(out.widgets[0].inTree).toBe(true);
+    expect(out.widgets[1].depth).toBe(1);
+    expect(out.widgets[1].parentId).toBe("n1");
+  });
 });

@@ -30,6 +30,26 @@ export interface GcEvent {
   isolate?: string;
 }
 
+/** A runtime log entry forwarded from the VM Service `Logging` stream. */
+export type LogLevel = "debug" | "info" | "warning" | "error" | "severe";
+
+export interface LogMessage {
+  id: string;
+  t: number;
+  level: LogLevel;
+  /** Numeric package:logging severity (>= 800 = warning-ish threshold). */
+  severity: number;
+  message: string;
+  loggerName?: string;
+  /** Bridge-side sequence number (for client-side deduplication). */
+  seq?: number;
+}
+
+export interface BridgeLogMessage {
+  type: "log";
+  entry: LogMessage;
+}
+
 export interface NetworkRequest {
   id: string;
   t: number;
@@ -85,6 +105,12 @@ export interface WidgetRebuildStat {
   sourceLine?: number;
   /** Rebuild root this widget was attributed to, when known. */
   cause?: string;
+  /** Parent node id when this row comes from a mounted element-tree walk. */
+  parentId?: string;
+  /** Depth in the mounted tree (0 = route root). */
+  depth?: number;
+  /** True when the widget is currently mounted in the element tree. */
+  inTree?: boolean;
 }
 
 export interface ScreenRebuildStat {
@@ -142,6 +168,11 @@ export interface HotWidgetsPayload {
   /** Most recently observed route/screen label from the widget probe. */
   currentRoute?: string;
   widgets: WidgetRebuildStat[];
+  /**
+   * Mounted element tree for the current route (preorder). Prefer this over
+   * `widgets` on the Widgets page so rows stay while the screen is open.
+   */
+  tree?: WidgetRebuildStat[];
   screens: ScreenRebuildStat[];
   problems?: PerformanceProblem[];
   frozen?: boolean;
@@ -499,6 +530,7 @@ export type BridgeServerMessage =
   | BridgeExtensionMessage
   | BridgeHotWidgetsMessage
   | BridgeDiscoverMessage
+  | BridgeLogMessage
   | BridgeErrorMessage
   | BridgeCapabilitiesMessage
   | BridgeCpuProfileMessage

@@ -56,8 +56,44 @@ export function normalizeHotWidgetsMessage(
       sourceUri: anyW.sourceUri,
       sourceLine: anyW.sourceLine,
       cause: anyW.cause,
+      parentId: anyW.parentId,
+      depth: anyW.depth,
+      inTree: anyW.inTree,
     };
   });
+
+  const tree: WidgetRebuildStat[] | undefined = msg.tree?.length
+    ? msg.tree.map((w) => {
+        const anyW = w as WidgetRebuildStat;
+        const name = anyW.name ?? "Widget";
+        const route = anyW.route ?? "(unnamed)";
+        const keyLabel = anyW.keyLabel;
+        const id = anyW.id ?? `${route}|${name}|${keyLabel ?? ""}`;
+        const rebuildsWindow = anyW.rebuildsWindow ?? 0;
+        const rebuildsSession = anyW.rebuildsSession ?? rebuildsWindow;
+        const ratePerSec =
+          anyW.ratePerSec ?? Number((rebuildsWindow / windowSec).toFixed(2));
+        return {
+          id,
+          name,
+          route,
+          keyLabel,
+          rebuildsSession,
+          rebuildsWindow,
+          ratePerSec,
+          share: anyW.share ?? 0,
+          lastSeenMs: anyW.lastSeenMs ?? 0,
+          isFramework: Boolean(anyW.isFramework) || isFrameworkWidgetName(name),
+          duringJank: anyW.duringJank ?? duringJank,
+          sourceUri: anyW.sourceUri,
+          sourceLine: anyW.sourceLine,
+          cause: anyW.cause,
+          parentId: anyW.parentId,
+          depth: anyW.depth ?? 0,
+          inTree: anyW.inTree ?? true,
+        };
+      })
+    : undefined;
 
   const totalRebuildsWindow =
     totalRebuildsWindowHint || widgets.reduce((a, w) => a + w.rebuildsWindow, 0);
@@ -96,7 +132,8 @@ export function normalizeHotWidgetsMessage(
     totalRebuildsWindow,
     totalRebuildsSession,
     currentRoute: msg.currentRoute,
-    widgets,
+    widgets: tree?.length ? tree : widgets,
+    tree,
     screens,
     problems: msg.problems,
     frozen: msg.frozen,

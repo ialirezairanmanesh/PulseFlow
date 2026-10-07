@@ -8,6 +8,7 @@ import { HealthVerdict } from "@/components/health-verdict";
 import { buildProblems } from "@/lib/problems";
 import { computeVerdict } from "@/lib/verdict";
 import { usePulse } from "@/lib/pulse-store";
+import { baselinesFromSnapshot, verdictFromSnapshot } from "@/lib/session-snapshot";
 
 export function ProblemsList() {
   const {
@@ -31,47 +32,73 @@ export function ProblemsList() {
     rebuildCauses,
     appErrors,
     buildInfo,
+    sharedView,
+    clearShared,
   } = usePulse();
 
-  const input = probeFrozen && problemsSnapshot
-    ? problemsSnapshot
-    : {
-        hot,
-        hotAvailable,
-        latest: points.at(-1),
-        gcEvents,
-        cpuProfile,
-        memoryDiff,
-        network,
-        scenarioResult,
-        scenarioRunning,
-      };
+  // When a shared link is opened without a live connection, render the
+  // pre-computed snapshot read-only (no Record/Freeze controls).
+  const isSharedView = Boolean(sharedView) && !connected;
+
+  const input = isSharedView
+    ? {
+        hot: sharedView!.hot,
+        hotAvailable: sharedView!.hot?.available ?? null,
+        latest: sharedView!.points.at(-1),
+        gcEvents: [],
+        cpuProfile: undefined,
+        memoryDiff: undefined,
+        network: [],
+        scenarioResult: undefined,
+        scenarioRunning: null,
+      }
+    : probeFrozen && problemsSnapshot
+      ? problemsSnapshot
+      : {
+          hot,
+          hotAvailable,
+          latest: points.at(-1),
+          gcEvents,
+          cpuProfile,
+          memoryDiff,
+          network,
+          scenarioResult,
+          scenarioRunning,
+        };
 
   // During Record quiet window, force an empty problem list so the reset is visible
-  const problems = isRecording
-    ? []
-    : buildProblems({
-        hot: input.hot,
-        hotAvailable: input.hotAvailable,
-        latest: input.latest,
-        gcEvents: input.gcEvents,
-        cpuProfile: input.cpuProfile,
-        memoryDiff: input.memoryDiff,
-        network: input.network ?? network,
-        points,
-        scenarioResult: input.scenarioResult,
-        scenarioRunning: input.scenarioRunning,
-        rebuildCauses,
-        errors: appErrors,
-      });
+  const problems = isSharedView
+    ? sharedView!.problems
+    : isRecording
+      ? []
+      : buildProblems({
+          hot: input.hot,
+          hotAvailable: input.hotAvailable,
+          latest: input.latest,
+          gcEvents: input.gcEvents,
+          cpuProfile: input.cpuProfile,
+          memoryDiff: input.memoryDiff,
+          network: input.network ?? network,
+          points: sharedView ? [] : points,
+          scenarioResult: input.scenarioResult,
+          scenarioRunning: input.scenarioRunning,
+          rebuildCauses,
+          errors: appErrors,
+        });
 
-  const verdict = isRecording
-    ? null
-    : computeVerdict({
-        points,
-        problems,
-        budgetMs: input.latest?.buildBudgetMs,
-      });
+  const verdict = isSharedView
+    ? verdictFromSnapshot(sharedView!)
+    : isRecording
+      ? null
+      : computeVerdict({
+          points,
+          problems,
+          budgetMs: input.latest?.buildBudgetMs,
+        });
+
+  const sharedBaselines = isSharedView
+    ? baselinesFromSnapshot(sharedView!)
+    : [];
 
   const hasDetails =
     (input.hot?.screens?.length ?? 0) > 0 ||
@@ -95,7 +122,7 @@ export function ProblemsList() {
             type="button"
             size="sm"
             variant={isRecording ? "default" : "secondary"}
-            disabled={!connected || isRecording}
+            disabled={!connected || isRecording || isSharedView}
             title="Clear session counters and start a clean measurement"
             onClick={() => hotWidgetsControl("reset")}
           >
@@ -106,7 +133,7 @@ export function ProblemsList() {
             type="button"
             size="sm"
             variant={probeFrozen ? "default" : "outline"}
-            disabled={!connected}
+            disabled={!connected || isSharedView}
             title={
               probeFrozen
                 ? "Resume live rebuild sampling"
@@ -117,14 +144,35 @@ export function ProblemsList() {
             <Snowflake className="h-3.5 w-3.5" />
             {probeFrozen ? "Unfreeze" : "Freeze"}
           </Button>
-          <Button type="button" size="sm" variant="ghost" asChild>
-            <Link href="/report">
-              <FileDown className="h-3.5 w-3.5" />
-              Report
-            </Link>
-          </Button>
+          {sharedView ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="default"
+              onClick={clearShared}
+              title="Connect to a live app to inspect the real session"
+            >
+              Connect live
+            </Button>
+          ) : (
+            <Button type="button" size="sm" variant="ghost" asChild>
+              <Link href="/report">
+                <FileDown className="h-3.5 w-3.5" />
+                Report
+              </Link>
+            </Button>
+          )}
         </div>
       </section>
+
+      {isSharedView && (
+        <p className="rounded-md border border-amber-400/20 bg-amber-400/10 px-3 py-2 text-sm text-amber-100">
+          <span className="font-medium">Read-only shared view.</span> The rankings above were
+          captured at link time — Record/Freeze are disabled until you connect a live app.
+          {sharedBaselines.length > 0 &&
+            ` · ${sharedBaselines.length} baseline${sharedBaselines.length > 1 ? "s" : ""} restored`}
+        </p>
+      )}
 
       {(controlMessage || error) && (
         <p
@@ -141,7 +189,7 @@ export function ProblemsList() {
       {hotAvailable === false && (
         <p className="rounded-md border border-amber-400/20 bg-amber-400/10 px-3 py-3 text-sm text-amber-100">
           {hotMessage ??
-            "Widget probe extension not active — add examples/pulseflow_extension.dart to the app"}
+            "Widget probe not active — add package:pulseflow_flutter and call registerPulseFlow()"}
         </p>
       )}
 
