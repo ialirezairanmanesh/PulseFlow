@@ -315,6 +315,8 @@ export interface DiscoveredApp {
   connectable: boolean;
   detail?: string;
   deviceName?: string;
+  /** ADB serial (e.g. `localhost:5555` or USB id) when known. */
+  deviceSerial?: string;
 }
 
 export interface BridgeDiscoverMessage {

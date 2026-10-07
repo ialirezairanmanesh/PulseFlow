@@ -44,3 +44,6 @@ next-env.d.ts
 **/.dart_tool/
 /.data/
 
+# vendored ws-scrcpy (cloned by device-mirror/setup.sh)
+/device-mirror/ws-scrcpy/
+

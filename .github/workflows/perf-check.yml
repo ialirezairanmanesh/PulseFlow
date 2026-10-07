@@ -1,0 +1,138 @@
+name: PulseFlow budget check
+
+# Runs the headless PulseFlow performance budget check
+# (`pulseflow_bridge/bin/pulseflow_check.dart`) against a Flutter app built
+# in profile mode on an Android emulator. The job fails when P95 build/raster
+# or the jank ratio exceed the configured budgets.
+#
+# The Flutter app under test lives in a *separate* repo. Configure it via
+# repository or org secrets:
+#
+#   PULSEFLOW_APP_REPO        e.g. "your-org/your-flutter-app" (required)
+#   PULSEFLOW_APP_PATH        subpath inside that repo (default: ".")
+#   PULSEFLOW_ENTRYPOINT      relative main() file (default: "lib/main.dart")
+#   PULSEFLOW_BUDGET_P95_BUILD   pass threshold ms (default: 16)
+#   PULSEFLOW_BUDGET_P95_RASTER  pass threshold ms (default: 16)
+#   PULSEFLOW_BUDGET_JANK_RATIO  pass threshold 0..1 (default: 0.2)
+#   PULSEFLOW_SCENARIOS        comma-separated scenario ids (default: "listFlood,scrollStorm")
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/pulseflow/**"
+      - ".github/workflows/perf-check.yml"
+  workflow_dispatch:
+
+env:
+  PULSEFLOW_BUDGET_P95_BUILD: ${{ secrets.PULSEFLOW_BUDGET_P95_BUILD || '16' }}
+  PULSEFLOW_BUDGET_P95_RASTER: ${{ secrets.PULSEFLOW_BUDGET_P95_RASTER || '16' }}
+  PULSEFLOW_BUDGET_JANK_RATIO: ${{ secrets.PULSEFLOW_BUDGET_JANK_RATIO || '0.2' }}
+  PULSEFLOW_SCENARIOS: ${{ secrets.PULSEFLOW_SCENARIOS || 'listFlood,scrollStorm' }}
+  PULSEFLOW_APP_PATH: ${{ secrets.PULSEFLOW_APP_PATH || '.' }}
+  PULSEFLOW_ENTRYPOINT: ${{ secrets.PULSEFLOW_ENTRYPOINT || 'lib/main.dart' }}
+
+jobs:
+  perf-check:
+    runs-on: macos-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout PulseFlow
+        uses: actions/checkout@v4
+
+      - name: Checkout app under test
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.PULSEFLOW_APP_REPO }}
+          path: flutter-app
+          token: ${{ secrets.PULSEFLOW_APP_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Create Android emulator
+        # macos-latest ships Android SDK via Flutter; create an AVD and boot it.
+        shell: bash
+        run: |
+          echo "y" | $ANDROID_HOME/tools/bin/sdkmanager --install "system-images;android-34;google_apis;x86_64" --no_https
+          echo "no" | $ANDROID_HOME/tools/bin/avdmanager create avd -n pixel34 -k "system-images;android-34;google_apis;x86_64" --force
+          $ANDROID_HOME/emulator/emulator -avd pixel34 -no-snapshot -no-audio -no-boot-anim -gpu swiftshader_indirect &
+          echo "Emulator booting…"
+          # Wait until the device is online and boot completes.
+          $ANDROID_HOME/platform-tools/adb wait-for-device
+          for i in $(seq 1 60); do
+            if [ "$($ANDROID_HOME/platform-tools/adb shell getprop sys.boot_completed 2>/dev/null)" = "1" ]; then break; fi
+            sleep 4
+          done
+
+      - name: Resolve bridge deps
+        working-directory: pulseflow_bridge
+        run: dart pub get
+
+      - name: Build app (profile)
+        working-directory: flutter-app/${{ env.PULSEFLOW_APP_PATH }}
+        run: flutter build apk --profile -t ${{ env.PULSEFLOW_ENTRYPOINT }}
+
+      - name: Install app
+        run: adb install -r flutter-app/${{ env.PULSEFLOW_APP_PATH }}/build/app/outputs/apk/profile/app.apk
+
+      - name: Launch app and capture VM Service URL
+        id: launch
+        shell: bash
+        run: |
+          # `flutter run --machine` prints JSON events; one of them carries the
+          # wsUri we hand to pulseflow_check.
+          nohup flutter run --machine --profile -d pixel34 \
+            -t ${{ env.PULSEFLOW_ENTRYPOINT }} \
+            > /tmp/flutter_run.log 2>&1 &
+          URL=""
+          for i in $(seq 1 90); do
+            URL="$(grep -oE '"wsUri":"[^"]*"' /tmp/flutter_run.log | head -1 | sed 's/"wsUri":"//;s/"$//')" || true
+            if [ -n "$URL" ]; then break; fi
+            sleep 3
+          done
+          if [ -z "$URL" ]; then
+            echo "::error::Could not capture a VM Service URL — see /tmp/flutter_run.log"
+            cat /tmp/flutter_run.log
+            exit 1
+          fi
+          echo "vm_url=$URL" >> "$GITHUB_OUTPUT"
+          echo "VM Service: $URL"
+
+      - name: Run PulseFlow budget check
+        id: check
+        working-directory: pulseflow_bridge
+        shell: bash
+        run: |
+          set +e
+          dart run bin/pulseflow_check.dart \
+            --vm "${{ steps.launch.outputs.vm_url }}" \
+            --scenarios "${{ env.PULSEFLOW_SCENARIOS }}" \
+            --duration-ms 4000 \
+            --max-p95-build "${{ env.PULSEFLOW_BUDGET_P95_BUILD }}" \
+            --max-p95-raster "${{ env.PULSEFLOW_BUDGET_P95_RASTER }}" \
+            --max-jank-ratio "${{ env.PULSEFLOW_BUDGET_JANK_RATIO }}" \
+            --out perf-report.json \
+            --json
+          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
+
+      - name: Upload perf report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pulseflow-report
+          path: pulseflow_bridge/perf-report.json
+          if-no-files-found: warn
+
+      - name: Fail on budget violation
+        if: ${{ steps.check.outputs.exit_code == 1 }}
+        run: |
+          echo "::error::PulseFlow budget check FAILED — see the perf-report artifact."
+          cat pulseflow_bridge/perf-report.json
+          exit 1

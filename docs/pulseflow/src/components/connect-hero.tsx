@@ -146,7 +146,9 @@ export function ConnectHero() {
                         disabled={!bridgeReady || status === "connecting"}
                         onClick={() => {
                           setUrl(app.wsUrl);
-                          if (app.connectable) connect(app.wsUrl);
+                          if (app.connectable) {
+                            connect(app.wsUrl, { deviceSerial: app.deviceSerial });
+                          }
                         }}
                       >
                         {app.connectable ? "Connect" : "Use URL"}
@@ -167,8 +169,11 @@ export function ConnectHero() {
               disabled={status === "connecting"}
             />
             <p className="mt-2 text-sm text-[var(--ink-faint)]">
-              Auto-scan finds many local services. If auth is required, paste the full URL from{" "}
-              <code className="text-[var(--accent)]">flutter run</code> (includes the token).
+              Prefer entries with a teal <strong className="font-medium text-[var(--ink-muted)]">Connect</strong>{" "}
+              button. Grey <em>Use URL</em> means the port needs an auth token — Scan again after the app is
+              fully running on the device, or paste the full URL from{" "}
+              <code className="text-[var(--accent)]">flutter run</code> / logcat (
+              <code className="text-[var(--accent)]">The Dart VM service is listening on…</code>).
             </p>
             <div className="mt-5 flex flex-wrap gap-2">
               <Button

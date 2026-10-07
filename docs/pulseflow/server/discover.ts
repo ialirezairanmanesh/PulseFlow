@@ -23,13 +23,19 @@ export type DiscoveredApp = {
   connectable: boolean;
   detail?: string;
   deviceName?: string;
+  /** ADB serial (e.g. `localhost:5555` or USB id) when known. */
+  deviceSerial?: string;
 };
 
 type AdbForward = {
   serial: string;
   localPort: number;
+  remotePort: number;
   deviceName: string;
 };
+
+/** Scrcpy / ws-scrcpy device port — not a Dart VM Service. */
+const SCRCPY_REMOTE_PORT = 8886;
 
 type FlutterRunHint = {
   deviceId: string;
@@ -181,10 +187,13 @@ async function listAdbForwards(): Promise<Map<number, AdbForward>> {
       if (!m) continue;
       const serial = m[1];
       const localPort = Number(m[2]);
-      if (!Number.isFinite(localPort)) continue;
+      const remotePort = Number(m[3]);
+      if (!Number.isFinite(localPort) || !Number.isFinite(remotePort)) continue;
+      if (remotePort === SCRCPY_REMOTE_PORT) continue;
       byPort.set(localPort, {
         serial,
         localPort,
+        remotePort,
         deviceName: devices.get(serial) ?? serial,
       });
     }
@@ -192,6 +201,83 @@ async function listAdbForwards(): Promise<Map<number, AdbForward>> {
     /* ignore */
   }
   return byPort;
+}
+
+/**
+ * VS Code / flutter run on Android often only prints the auth URL in logcat.
+ * Map device-local VM ports → host ADB forwards and probe with the token.
+ */
+async function discoverViaAdbLogcat(
+  adbForwards: Map<number, AdbForward>,
+): Promise<DiscoveredApp[]> {
+  const byRemote = new Map<string, AdbForward>();
+  for (const f of adbForwards.values()) {
+    byRemote.set(`${f.serial}:${f.remotePort}`, f);
+  }
+  if (byRemote.size === 0) return [];
+
+  const devices = await listAdbDevices();
+  const flutterHints = await listFlutterRunHints();
+  const byLocal = new Map<number, DiscoveredApp>();
+
+  for (const serial of devices.keys()) {
+    let lines: string[] = [];
+    try {
+      const { stdout } = await execFileAsync(
+        "adb",
+        ["-s", serial, "logcat", "-d", "-t", "400"],
+        { timeout: 3500, maxBuffer: 2 * 1024 * 1024 },
+      );
+      lines = stdout.split("\n");
+    } catch {
+      continue;
+    }
+
+    for (const line of [...lines].reverse()) {
+      const m = /The Dart VM service is listening on (https?:\/\/\S+)/i.exec(line);
+      if (!m) continue;
+      let uri: URL;
+      try {
+        uri = new URL(m[1].replace(/[\])\},;]+$/, ""));
+      } catch {
+        continue;
+      }
+      const remotePort = Number(uri.port);
+      if (!Number.isFinite(remotePort)) continue;
+      const fwd = byRemote.get(`${serial}:${remotePort}`);
+      if (!fwd || byLocal.has(fwd.localPort)) continue;
+
+      const auth = uri.pathname.split("/").filter(Boolean)[0] ?? "";
+      if (!auth) continue;
+
+      const httpUrl = toHttpUrl("127.0.0.1", fwd.localPort, auth);
+      const wsUrl = toWsUrl(httpUrl);
+      const probe = await probeVmOverWs(wsUrl, 1200);
+      if (!probe) continue;
+
+      byLocal.set(fwd.localPort, {
+        id: appId(wsUrl),
+        name: displayNameForPort({
+          port: fwd.localPort,
+          isolateName: probe.isolateName,
+          vmName: probe.vmName,
+          adb: fwd,
+          flutterHints,
+          needsAuth: false,
+        }),
+        wsUrl,
+        httpUrl,
+        port: fwd.localPort,
+        source: "adb",
+        isolateName: probe.isolateName,
+        connectable: true,
+        deviceName: fwd.deviceName,
+        deviceSerial: fwd.serial,
+        detail: "via ADB (auth from device logcat)",
+      });
+    }
+  }
+  return [...byLocal.values()];
 }
 
 async function listFlutterRunHints(): Promise<FlutterRunHint[]> {
@@ -405,6 +491,7 @@ async function discoverViaDevelopmentService(
       isolateName: probe?.isolateName,
       connectable: Boolean(probe),
       deviceName: hint.deviceName ?? adb?.deviceName,
+      deviceSerial: adb?.serial,
       detail: probe
         ? "Dart Development Service (from flutter run)"
         : "DDS found but WebSocket probe failed",
@@ -637,6 +724,7 @@ async function probePort(
       isolateName: probe?.isolateName,
       connectable: Boolean(probe),
       deviceName: ddsHint.deviceName ?? adb?.deviceName,
+      deviceSerial: adb?.serial ?? hintDeviceSerial(flutterHints, adb),
       detail: probe
         ? "Dart Development Service (from flutter run)"
         : "DDS found but WebSocket probe failed",
@@ -655,6 +743,12 @@ async function probePort(
   }
 
   if (res && isDevToolsHttp(res.body, res.status)) return null;
+  if (
+    res &&
+    /WebSocket Upgrade Failure|TooTallNate|java-websocket/i.test(res.body)
+  ) {
+    return null;
+  }
 
   const poweredBy = String(res?.headers["x-powered-by"] ?? "");
   const looksDart =
@@ -713,6 +807,7 @@ async function probePort(
     isolateName: probe?.isolateName,
     connectable: Boolean(probe),
     deviceName: adb?.deviceName,
+    deviceSerial: adb?.serial ?? hintDeviceSerial(flutterHints, adb),
     detail: adb
       ? probe
         ? "via ADB"
@@ -723,6 +818,18 @@ async function probePort(
         ? "Found by scanning localhost ports"
         : "Detected Dart HTTP service (could not open VM WebSocket)",
   };
+}
+
+function hintDeviceSerial(
+  flutterHints: FlutterRunHint[],
+  adb: AdbForward | undefined,
+): string | undefined {
+  for (const h of flutterHints) {
+    if (!h.deviceId) continue;
+    if (!adb) return h.deviceId;
+    if (h.deviceId === adb.serial || adb.serial.startsWith(h.deviceId)) return adb.serial;
+  }
+  return undefined;
 }
 
 async function discoverViaPortScan(): Promise<DiscoveredApp[]> {
@@ -777,6 +884,7 @@ export async function discoverRunningApps(): Promise<DiscoveredApp[]> {
         connectable: app.connectable || prev.connectable,
         isolateName: app.isolateName ?? prev.isolateName,
         deviceName: app.deviceName ?? prev.deviceName,
+        deviceSerial: app.deviceSerial ?? prev.deviceSerial,
         detail: preferApp
           ? (app.detail ?? prev.detail)
           : app.connectable
@@ -794,6 +902,7 @@ export async function discoverRunningApps(): Promise<DiscoveredApp[]> {
 
   const settled = await Promise.all([
     withTimeout(discoverViaDevelopmentService(adbForwards), 4000, []),
+    withTimeout(discoverViaAdbLogcat(adbForwards), 5000, []),
     withTimeout(discoverViaMdns(), 3000, []),
     withTimeout(discoverServiceInfoFiles(), 3000, []),
     withTimeout(discoverViaPortScan(), DISCOVER_TIMEOUT_MS, []),

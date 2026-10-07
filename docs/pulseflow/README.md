@@ -42,6 +42,19 @@ NEXT_PUBLIC_BRIDGE_HOST=127.0.0.1
 
 Use **Try demo mode** to explore every lab surface without a Flutter app.
 
+## Live device pane (Android / redroid)
+
+After Connect, the dashboard is a **split lab**: left = live device screen (touch via [ws-scrcpy](./device-mirror/)), right = the tabs below. `make run` starts the mirror sidecar on port **3848** (see [device-mirror/README.md](./device-mirror/README.md)).
+
+Typical redroid loop:
+
+1. `make redroid-start` (binder modules loaded on the host)
+2. `make run`
+3. `make redroid-run-debug` (or your app on `localhost:5555`)
+4. Connect from PulseFlow — use the left pane to drive the UI while reading Problems / Widgets / Frames on the right
+
+Demo mode hides the live stream (no ADB serial). Collapse the pane with the header control if you want full-width analysis.
+
 ## Pages (after Connect)
 
 | Route | Purpose |
@@ -118,8 +131,15 @@ payload.
 
 ## Widget probe + scenarios (Flutter package)
 
-Add the `pulseflow_flutter` package (sibling folder `pulseflow_flutter/`) to your app and register
-it from `main()`:
+Add the [`pulseflow_flutter`](https://github.com/ialirezairanmanesh/pulseflow_flutter) package
+to your app and register it from `main()`:
+
+```yaml
+dependencies:
+  pulseflow_flutter:
+    git:
+      url: https://github.com/ialirezairanmanesh/pulseflow_flutter.git
+```
 
 ```dart
 import 'package:pulseflow_flutter/pulseflow_flutter.dart';
@@ -129,6 +149,10 @@ void main() {
   runApp(const MyApp());
 }
 ```
+
+For local PulseFlow development, clone the package next to this repo
+(`../pulseflow_flutter`) or set `PULSEFLOW_FLUTTER` — `make test-flutter` and
+`./redroid.sh` use that path.
 
 The older single-file stub (`examples/pulseflow_extension.dart`) still works, but the package adds
 accurate frame timing (`addTimingsCallback`), refresh-rate-aware budgets, widget source locations

@@ -14,6 +14,12 @@ import { PulseBridgeClient } from "@/lib/bridge-client";
 import { normalizeHotWidgetsMessage } from "@/lib/normalize-hot";
 import { buildProblems, computeBaselineMetrics } from "@/lib/problems";
 import { downloadBase64 } from "@/lib/session-report";
+import {
+  buildSnapshot,
+  shareableUrl,
+  snapshotFromHash,
+  type ShareSnapshot,
+} from "@/lib/session-snapshot";
 import type {
   AttributedRebuild,
   BridgeHotWidgetsMessage,
@@ -101,6 +107,8 @@ type PulseContextValue = {
   statusMessage: string;
   isolateName?: string;
   error?: string;
+  /** ADB serial for the connected app's device (device mirror pane). */
+  deviceSerial?: string;
   connected: boolean;
   points: MetricPoint[];
   gcEvents: GcEvent[];
@@ -137,10 +145,16 @@ type PulseContextValue = {
   appErrors: ErrorEntry[];
   images: ImageStatsState | null;
   buildInfo: BuildInfoState | null;
+  /** Frozen snapshot restored from a shared URL (`#s=...`), shown read-only. */
+  sharedView: ShareSnapshot | null;
+  /** Encodes the current view into a shareable URL and copies it to the clipboard. */
+  shareView: () => Promise<void>;
+  /** Clears a restored shared view (returns to the live session). */
+  clearShared: () => void;
   baselines: SessionBaseline[];
   debugOptions: DebugOptionState[];
   debugOptionsMessage?: string;
-  connect: (overrideUrl?: string) => void;
+  connect: (overrideUrl?: string, opts?: { deviceSerial?: string }) => void;
   disconnect: () => void;
   mock: () => void;
   discover: () => void;
@@ -178,6 +192,7 @@ export function PulseProvider({ children }: { children: ReactNode }) {
   const [statusMessage, setStatusMessage] = useState("Starting bridge client…");
   const [isolateName, setIsolateName] = useState<string>();
   const [error, setError] = useState<string>();
+  const [deviceSerial, setDeviceSerial] = useState<string>();
   const [points, setPoints] = useState<MetricPoint[]>([]);
   const [gcEvents, setGcEvents] = useState<GcEvent[]>([]);
   const [network, setNetwork] = useState<NetworkRequest[]>([]);
@@ -218,6 +233,10 @@ export function PulseProvider({ children }: { children: ReactNode }) {
   const [baselines, setBaselines] = useState<SessionBaseline[]>([]);
   const [debugOptions, setDebugOptions] = useState<DebugOptionState[]>([]);
   const [debugOptionsMessage, setDebugOptionsMessage] = useState<string>();
+  /** Restores a read-only view from a shared URL (`#s=...`). */
+  const [sharedView, setSharedView] = useState<ShareSnapshot | null>(() =>
+    typeof window !== "undefined" ? snapshotFromHash(window.location.hash) : null,
+  );
 
   const clientRef = useRef<PulseBridgeClient | null>(null);
   const probeFrozenRef = useRef(false);
@@ -508,10 +527,11 @@ export function PulseProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const connect = useCallback(
-    (overrideUrl?: string) =>
+    (overrideUrl?: string, opts?: { deviceSerial?: string }) =>
       send(() => {
         const target = (overrideUrl ?? url).trim();
         if (overrideUrl) setUrl(target);
+        setDeviceSerial(opts?.deviceSerial);
         clearTelemetry();
         clientRef.current?.send({ type: "connect", url: target });
       }),
@@ -519,13 +539,18 @@ export function PulseProvider({ children }: { children: ReactNode }) {
   );
 
   const disconnect = useCallback(
-    () => send(() => clientRef.current?.send({ type: "disconnect" })),
+    () =>
+      send(() => {
+        setDeviceSerial(undefined);
+        clientRef.current?.send({ type: "disconnect" });
+      }),
     [send],
   );
 
   const mock = useCallback(
     () =>
       send(() => {
+        setDeviceSerial(undefined);
         clearTelemetry();
         clientRef.current?.send({ type: "mock" });
       }),
@@ -763,6 +788,7 @@ export function PulseProvider({ children }: { children: ReactNode }) {
       statusMessage,
       isolateName,
       error,
+      deviceSerial,
       connected,
       points,
       gcEvents,
@@ -834,6 +860,7 @@ export function PulseProvider({ children }: { children: ReactNode }) {
       statusMessage,
       isolateName,
       error,
+      deviceSerial,
       connected,
       points,
       gcEvents,

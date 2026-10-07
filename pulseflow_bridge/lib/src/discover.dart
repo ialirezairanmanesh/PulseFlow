@@ -15,6 +15,7 @@ class DiscoveredApp {
     this.isolateName,
     this.detail,
     this.deviceName,
+    this.deviceSerial,
   });
 
   final String id;
@@ -27,6 +28,8 @@ class DiscoveredApp {
   final bool connectable;
   final String? detail;
   final String? deviceName;
+  /// ADB serial (e.g. `localhost:5555` or USB id) when known.
+  final String? deviceSerial;
 
   Map<String, Object?> toJson() => <String, Object?>{
         'id': id,
@@ -39,15 +42,20 @@ class DiscoveredApp {
         if (isolateName != null) 'isolateName': isolateName,
         if (detail != null) 'detail': detail,
         if (deviceName != null) 'deviceName': deviceName,
+        if (deviceSerial != null) 'deviceSerial': deviceSerial,
       };
 }
 
 class _AdbForward {
-  _AdbForward(this.serial, this.localPort, this.deviceName);
+  _AdbForward(this.serial, this.localPort, this.remotePort, this.deviceName);
   final String serial;
   final int localPort;
+  final int remotePort;
   final String deviceName;
 }
+
+/// Scrcpy / ws-scrcpy listens on device port 8886 — not a Dart VM Service.
+const int _scrcpyRemotePort = 8886;
 
 class _FlutterRunHint {
   _FlutterRunHint(this.deviceId, this.appName);
@@ -221,13 +229,91 @@ Future<Map<int, _AdbForward>> _listAdbForwards() async {
         RegExp(r'^(\S+)\s+tcp:(\d+)\s+tcp:(\d+)\s*$').firstMatch(line.trim());
     if (m == null) continue;
     final int localPort = int.parse(m.group(2)!);
+    final int remotePort = int.parse(m.group(3)!);
+    if (remotePort == _scrcpyRemotePort) continue;
     byPort[localPort] = _AdbForward(
       m.group(1)!,
       localPort,
+      remotePort,
       devices[m.group(1)!] ?? m.group(1)!,
     );
   }
   return byPort;
+}
+
+/// VS Code / `flutter run` on Android often only prints the auth URL in logcat.
+/// Map device-local VM ports → host ADB forwards and probe with the token.
+Future<List<DiscoveredApp>> _discoverViaAdbLogcat(
+  Map<int, _AdbForward> adbForwards,
+) async {
+  final Map<String, _AdbForward> byRemote = <String, _AdbForward>{};
+  for (final _AdbForward f in adbForwards.values) {
+    byRemote['${f.serial}:${f.remotePort}'] = f;
+  }
+  if (byRemote.isEmpty) return <DiscoveredApp>[];
+
+  final Map<String, String> devices = await _listAdbDevices();
+  final List<_FlutterRunHint> flutterHints = await _listFlutterRunHints();
+  final Map<int, DiscoveredApp> byLocalPort = <int, DiscoveredApp>{};
+
+  for (final String serial in devices.keys) {
+    final List<String> lines = await _run(
+      'adb',
+      <String>['-s', serial, 'logcat', '-d', '-t', '400'],
+      3500,
+    );
+    // Newest first — hot restart leaves many historical listening lines.
+    for (final String line in lines.reversed) {
+      final RegExpMatch? m = RegExp(
+        r'The Dart VM service is listening on (https?://\S+)',
+        caseSensitive: false,
+      ).firstMatch(line);
+      if (m == null) continue;
+      Uri uri;
+      try {
+        uri = Uri.parse(m.group(1)!.replaceAll(RegExp(r'[\])\},;]+$'), ''));
+      } catch (_) {
+        continue;
+      }
+      if (!uri.hasPort) continue;
+      final _AdbForward? fwd = byRemote['$serial:${uri.port}'];
+      if (fwd == null) continue;
+      if (byLocalPort.containsKey(fwd.localPort)) continue;
+
+      final List<String> segs =
+          uri.pathSegments.where((String s) => s.isNotEmpty).toList();
+      final String auth = segs.isNotEmpty ? segs.first : '';
+      if (auth.isEmpty) continue;
+
+      final String httpUrl = toHttpUrl('127.0.0.1', fwd.localPort, auth);
+      final String wsUrl = toWsUrl(httpUrl);
+      final _Probe? probe = await probeVmOverWs(wsUrl, 1200);
+      if (probe == null) continue;
+
+      final String name = _displayNameForPort(
+        port: fwd.localPort,
+        isolateName: probe.isolateName,
+        vmName: probe.vmName,
+        adb: fwd,
+        flutterHints: flutterHints,
+        needsAuth: false,
+      );
+      byLocalPort[fwd.localPort] = DiscoveredApp(
+        id: _appId(wsUrl),
+        name: name,
+        wsUrl: wsUrl,
+        httpUrl: httpUrl,
+        port: fwd.localPort,
+        source: 'adb',
+        isolateName: probe.isolateName,
+        connectable: true,
+        deviceName: fwd.deviceName,
+        deviceSerial: fwd.serial,
+        detail: 'via ADB (auth from device logcat)',
+      );
+    }
+  }
+  return byLocalPort.values.toList();
 }
 
 Future<List<_FlutterRunHint>> _listFlutterRunHints() async {
@@ -455,6 +541,7 @@ Future<List<DiscoveredApp>> _discoverViaDevelopmentService(
       isolateName: probe?.isolateName,
       connectable: probe != null,
       deviceName: hint.deviceName ?? adb?.deviceName,
+      deviceSerial: adb?.serial,
       detail: probe != null
           ? 'Dart Development Service (from flutter run)'
           : 'DDS found but WebSocket probe failed',
@@ -621,6 +708,7 @@ Future<DiscoveredApp?> _probePort(
       isolateName: probe?.isolateName,
       connectable: probe != null,
       deviceName: ddsHint.deviceName ?? adb?.deviceName,
+      deviceSerial: adb?.serial ?? _hintDeviceSerial(flutterHints, adb),
       detail: probe != null ? 'Dart Development Service (from flutter run)' : 'DDS found but WebSocket probe failed',
     );
   }
@@ -629,6 +717,12 @@ Future<DiscoveredApp?> _probePort(
   final String httpUrl = 'http://127.0.0.1:$port/';
   final ({int status, String body})? res = await _httpGet(httpUrl, adb != null ? 900 : 350);
   if (res != null && _looksLikeDevTools(res.body, res.status)) return null;
+  // Scrcpy / other Java WebSocket servers sometimes share ADB forwards.
+  if (res != null &&
+      RegExp(r'WebSocket Upgrade Failure|TooTallNate|java-websocket', caseSensitive: false)
+          .hasMatch(res.body)) {
+    return null;
+  }
 
   final bool looksDart = res != null &&
       (RegExp('Dart VM Service|Observatory|package:shelf', caseSensitive: false)
@@ -688,10 +782,20 @@ Future<DiscoveredApp?> _probePort(
     isolateName: probe?.isolateName,
     connectable: probe != null,
     deviceName: adb?.deviceName,
+    deviceSerial: adb?.serial ?? _hintDeviceSerial(flutterHints, adb),
     detail: adb != null
         ? (probe != null ? 'via ADB' : 'ADB forward — paste full VM Service URL from flutter run')
         : (probe != null ? 'Found by scanning localhost ports' : 'Detected Dart HTTP service (could not open VM WebSocket)'),
   );
+}
+
+String? _hintDeviceSerial(List<_FlutterRunHint> flutterHints, _AdbForward? adb) {
+  for (final _FlutterRunHint h in flutterHints) {
+    if (h.deviceId.isEmpty) continue;
+    if (adb == null) return h.deviceId;
+    if (h.deviceId == adb.serial || adb.serial.startsWith(h.deviceId)) return adb.serial;
+  }
+  return null;
 }
 
 int _sourceRank(String source) {
@@ -734,6 +838,7 @@ Future<List<DiscoveredApp>> discoverRunningApps() async {
 
   final List<List<DiscoveredApp>> settled = await Future.wait(<Future<List<DiscoveredApp>>>[
     guarded(_discoverViaDevelopmentService(adbForwards), 4000),
+    guarded(_discoverViaAdbLogcat(adbForwards), 5000),
     guarded(_discoverViaMdns(), 3000),
     guarded(_discoverServiceInfoFiles(), 3000),
     guarded(_portScan(adbForwards), _discoverTimeoutMs),
@@ -761,6 +866,7 @@ Future<List<DiscoveredApp>> discoverRunningApps() async {
         isolateName: app.isolateName ?? prev.isolateName,
         connectable: app.connectable || prev.connectable,
         deviceName: app.deviceName ?? prev.deviceName,
+        deviceSerial: app.deviceSerial ?? prev.deviceSerial,
         detail: preferApp ? (app.detail ?? prev.detail) : (prev.detail ?? app.detail),
       );
     }
@@ -800,6 +906,7 @@ Future<List<DiscoveredApp>> discoverRunningApps() async {
         isolateName: app.isolateName,
         connectable: app.connectable,
         deviceName: app.deviceName,
+        deviceSerial: app.deviceSerial,
         detail: app.detail,
       );
     }

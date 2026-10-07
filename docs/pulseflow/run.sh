@@ -7,6 +7,7 @@ cd "$ROOT"
 
 WEB_PORT="${PULSEFLOW_WEB_PORT:-3846}"
 BRIDGE_PORT="${PULSEFLOW_BRIDGE_PORT:-3847}"
+MIRROR_PORT="${PULSEFLOW_MIRROR_PORT:-3848}"
 
 if ! command -v node >/dev/null 2>&1; then
   echo "Node.js is required (18+)." >&2
@@ -37,13 +38,22 @@ free_port() {
 
 free_port "$WEB_PORT"
 free_port "$BRIDGE_PORT"
+free_port "$MIRROR_PORT"
+
+if [[ ! -f device-mirror/ws-scrcpy/dist/index.js ]]; then
+  echo "Preparing device mirror (ws-scrcpy)…"
+  ./device-mirror/setup.sh || echo "(device mirror setup skipped)"
+fi
 
 echo
 echo "  PulseFlow"
 echo "  UI:     http://127.0.0.1:${WEB_PORT}"
 echo "  Bridge: http://127.0.0.1:${BRIDGE_PORT}  (ws://127.0.0.1:${BRIDGE_PORT}/bridge)"
+echo "  Mirror: http://127.0.0.1:${MIRROR_PORT}  (live Android / redroid)"
 echo
 echo "  Ctrl+C to stop."
 echo
 
+export PULSEFLOW_MIRROR_PORT="$MIRROR_PORT"
+export NEXT_PUBLIC_MIRROR_PORT="$MIRROR_PORT"
 exec npm run dev

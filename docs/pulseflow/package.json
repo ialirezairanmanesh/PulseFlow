@@ -3,11 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "concurrently -k -n bridge,web -c teal,cyan \"npm run bridge\" \"next dev -p 3846 -H 0.0.0.0 --webpack\"",
+    "dev": "concurrently -k -n bridge,web,mirror -c teal,cyan,magenta \"npm run bridge\" \"next dev -p 3846 -H 0.0.0.0 --webpack\" \"npm run mirror\"",
     "bridge": "cd ../../pulseflow_bridge && dart run bin/pulseflow_bridge.dart",
     "bridge:node": "tsx server/bridge.ts",
+    "mirror": "./device-mirror/start.sh",
+    "mirror:setup": "./device-mirror/setup.sh",
     "build": "next build",
-    "start": "concurrently -k -n bridge,web -c teal,cyan \"npm run bridge\" \"next start -p 3846 -H 0.0.0.0\"",
+    "start": "concurrently -k -n bridge,web,mirror -c teal,cyan,magenta \"npm run bridge\" \"next start -p 3846 -H 0.0.0.0\" \"npm run mirror\"",
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest"
