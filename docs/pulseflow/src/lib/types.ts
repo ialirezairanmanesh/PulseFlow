@@ -195,6 +195,8 @@ export interface CapabilityMap {
   pulseExtension: boolean;
   scenarios: boolean;
   widgetProbe: boolean;
+  deviceContext?: boolean;
+  stalls?: boolean;
 }
 
 export interface FlameNode {
@@ -492,12 +494,53 @@ export interface ProbeAvailability {
   errors?: boolean;
   images?: boolean;
   leaks?: boolean;
+  stalls?: boolean;
+  deviceContext?: boolean;
 }
 
 export interface BridgeBuildInfoMessage {
   type: "buildInfo";
   buildMode: string;
   probes: ProbeAvailability;
+}
+
+export interface DeviceDisplayInfo {
+  refreshRate?: number;
+  budgetMs?: number;
+  devicePixelRatio?: number;
+  physicalWidth?: number;
+  physicalHeight?: number;
+}
+
+export interface BridgeDeviceContextMessage {
+  type: "deviceContext";
+  available: boolean;
+  platform?: string;
+  buildMode?: string;
+  locale?: string;
+  textScale?: number;
+  appPackage?: string;
+  display?: DeviceDisplayInfo;
+  extras?: Record<string, unknown>;
+  message?: string;
+}
+
+export interface StallEntry {
+  id: string;
+  durationMs: number;
+  atMs: number;
+  route?: string;
+}
+
+export interface BridgeStallsMessage {
+  type: "stalls";
+  available: boolean;
+  active?: boolean;
+  thresholdMs?: number;
+  total?: number;
+  maxDurationMs?: number;
+  stalls: StallEntry[];
+  message?: string;
 }
 
 /** Flutter framework debug toggles (same as DevTools Inspector). */
@@ -543,6 +586,8 @@ export type BridgeServerMessage =
   | BridgeErrorsMessage
   | BridgeImagesMessage
   | BridgeBuildInfoMessage
+  | BridgeDeviceContextMessage
+  | BridgeStallsMessage
   | BridgeDebugOptionsMessage;
 
 export type BridgeClientMessage =

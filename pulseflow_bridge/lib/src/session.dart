@@ -25,6 +25,8 @@ Map<String, bool> defaultCaps() => <String, bool>{
       'pulseExtension': false,
       'scenarios': false,
       'widgetProbe': false,
+      'deviceContext': false,
+      'stalls': false,
     };
 
 Map<String, bool> _mockCaps() => <String, bool>{
@@ -42,6 +44,8 @@ Map<String, bool> _mockCaps() => <String, bool>{
       'pulseExtension': true,
       'scenarios': true,
       'widgetProbe': true,
+      'deviceContext': true,
+      'stalls': true,
     };
 
 const List<Map<String, Object?>> mockScenarios = <Map<String, Object?>>[
@@ -299,11 +303,14 @@ class BridgeSession {
         unawaited(_pollRebuildCauses());
         unawaited(_pollErrors());
         unawaited(_pollImages());
+        unawaited(_pollStalls());
       });
       unawaited(_pollHotWidgets());
       unawaited(_pollRebuildCauses());
       unawaited(_pollErrors());
       unawaited(_pollImages());
+      unawaited(_pollDeviceContext());
+      unawaited(_pollStalls());
     } catch (error) {
       _disconnectVm();
       _send(<String, Object?>{'type': 'status', 'status': 'error', 'message': '$error'});
@@ -660,6 +667,8 @@ class BridgeSession {
     caps['pulseExtension'] = _extensionMethods.any((String m) => m.startsWith('ext.pulseflow.'));
     caps['scenarios'] = _extensionMethods.contains('ext.pulseflow.listScenarios');
     caps['widgetProbe'] = _extensionMethods.contains('ext.pulseflow.getHotWidgets');
+    caps['deviceContext'] = _extensionMethods.contains('ext.pulseflow.getDeviceContext');
+    caps['stalls'] = _extensionMethods.contains('ext.pulseflow.getStallReport');
     _caps = caps;
     _send(<String, Object?>{
       'type': 'capabilities',
@@ -1021,6 +1030,48 @@ class BridgeSession {
         'available': data['available'] != false,
         'cache': data['cache'] ?? <String, Object?>{},
         'oversized': (data['oversized'] as List<dynamic>?) ?? <Object?>[],
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _pollDeviceContext() async {
+    if (_mode != 'live' || _isolateId == null) return;
+    if (!_extensionMethods.contains('ext.pulseflow.getDeviceContext')) return;
+    try {
+      final Map<String, dynamic>? data =
+          await _callExtension('ext.pulseflow.getDeviceContext');
+      if (data == null) return;
+      _send(<String, Object?>{
+        'type': 'deviceContext',
+        'available': data['ok'] != false,
+        'platform': data['platform'],
+        'buildMode': data['buildMode'],
+        'locale': data['locale'],
+        'textScale': data['textScale'],
+        'appPackage': data['appPackage'],
+        'display': data['display'] ?? <String, Object?>{},
+        'extras': data['extras'] ?? <String, Object?>{},
+      });
+    } catch (_) {}
+  }
+
+  Future<void> _pollStalls() async {
+    if (_mode != 'live' || _isolateId == null) return;
+    if (!_extensionMethods.contains('ext.pulseflow.getStallReport')) return;
+    try {
+      final Map<String, dynamic>? data = await _callExtension(
+        'ext.pulseflow.getStallReport',
+        args: <String, dynamic>{'limit': '40'},
+      );
+      if (data == null) return;
+      _send(<String, Object?>{
+        'type': 'stalls',
+        'available': data['available'] != false,
+        'active': data['active'] == true,
+        'thresholdMs': data['thresholdMs'] ?? 250,
+        'total': data['total'] ?? 0,
+        'maxDurationMs': data['maxDurationMs'] ?? 0,
+        'stalls': (data['stalls'] as List<dynamic>?) ?? <Object?>[],
       });
     } catch (_) {}
   }
@@ -2028,8 +2079,12 @@ class BridgeSession {
         'errors': true,
         'images': true,
         'leaks': true,
+        'stalls': true,
+        'deviceContext': true,
       },
     });
+    _emitMockDeviceContext();
+    _emitMockStalls();
     for (final String id in _mockDebugOptions.keys) {
       _mockDebugOptions[id] = false;
     }
@@ -2045,6 +2100,50 @@ class BridgeSession {
       _emitMockRebuildCauses();
       _emitMockErrors();
       _emitMockImages();
+      _emitMockStalls();
+    });
+  }
+
+  void _emitMockDeviceContext() {
+    _send(<String, Object?>{
+      'type': 'deviceContext',
+      'available': true,
+      'platform': 'android',
+      'buildMode': 'debug',
+      'locale': 'en-US',
+      'textScale': 1.0,
+      'appPackage': 'demo_app',
+      'display': <String, Object?>{
+        'refreshRate': 60,
+        'budgetMs': defaultFrameBudgetMs,
+        'devicePixelRatio': 2.75,
+        'physicalWidth': 1080,
+        'physicalHeight': 2400,
+      },
+      'extras': <String, Object?>{'demo': true},
+    });
+  }
+
+  void _emitMockStalls() {
+    final int t = DateTime.now().millisecondsSinceEpoch;
+    final bool spike = _rng.nextDouble() > 0.85;
+    _send(<String, Object?>{
+      'type': 'stalls',
+      'available': true,
+      'active': true,
+      'thresholdMs': 250,
+      'total': spike ? 1 : 0,
+      'maxDurationMs': spike ? 320 + _rng.nextDouble() * 200 : 0,
+      'stalls': spike
+          ? <Object?>[
+              <String, Object?>{
+                'id': 'stall-mock-$t',
+                'durationMs': round2(320 + _rng.nextDouble() * 200),
+                'atMs': t,
+                'route': '/home',
+              },
+            ]
+          : <Object?>[],
     });
   }
 
@@ -2061,6 +2160,8 @@ class BridgeSession {
           'ext.pulseflow.listScenarios',
           'ext.pulseflow.runScenario',
           'ext.pulseflow.stopScenario',
+          'ext.pulseflow.getDeviceContext',
+          'ext.pulseflow.getStallReport',
         ],
         'message': 'Mock stress actions and hot widgets simulate load locally',
       },

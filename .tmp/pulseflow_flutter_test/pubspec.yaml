@@ -1,0 +1,25 @@
+name: pulseflow_flutter
+description: >-
+  App-side probes for PulseFlow: accurate frame timing, rebuild hotspots with
+  source locations, HTTP capture, and memory-leak signals.
+version: 0.2.0
+homepage: https://github.com/ialirezairanmanesh/pulseflow_flutter
+repository: https://github.com/ialirezairanmanesh/pulseflow_flutter
+issue_tracker: https://github.com/ialirezairanmanesh/pulseflow_flutter/issues
+topics:
+  - flutter
+  - performance
+  - profiling
+  - devtools
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+  flutter: ">=3.10.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter

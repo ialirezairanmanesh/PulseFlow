@@ -49,8 +49,30 @@ import type {
   ScenarioResult,
   SessionBaseline,
   SocketSample,
+  StallEntry,
   TimelineMarker,
+  DeviceDisplayInfo,
 } from "@/lib/types";
+
+export interface DeviceContextState {
+  available: boolean;
+  platform?: string;
+  buildMode?: string;
+  locale?: string;
+  textScale?: number;
+  appPackage?: string;
+  display?: DeviceDisplayInfo;
+  extras?: Record<string, unknown>;
+}
+
+export interface StallsState {
+  available: boolean;
+  active?: boolean;
+  thresholdMs?: number;
+  total: number;
+  maxDurationMs: number;
+  stalls: StallEntry[];
+}
 
 export interface RebuildCausesState {
   available: boolean;
@@ -148,6 +170,8 @@ type PulseContextValue = {
   appErrors: ErrorEntry[];
   images: ImageStatsState | null;
   buildInfo: BuildInfoState | null;
+  deviceContext: DeviceContextState | null;
+  stalls: StallsState | null;
   /** Frozen snapshot restored from a shared URL (`#s=...`), shown read-only. */
   sharedView: ShareSnapshot | null;
   /** Encodes the current view into a shareable URL and copies it to the clipboard. */
@@ -236,6 +260,8 @@ export function PulseProvider({ children }: { children: ReactNode }) {
   const [appErrors, setAppErrors] = useState<ErrorEntry[]>([]);
   const [images, setImages] = useState<ImageStatsState | null>(null);
   const [buildInfo, setBuildInfo] = useState<BuildInfoState | null>(null);
+  const [deviceContext, setDeviceContext] = useState<DeviceContextState | null>(null);
+  const [stalls, setStalls] = useState<StallsState | null>(null);
   const [baselines, setBaselines] = useState<SessionBaseline[]>([]);
   const [debugOptions, setDebugOptions] = useState<DebugOptionState[]>([]);
   const [debugOptionsMessage, setDebugOptionsMessage] = useState<string>();
@@ -339,6 +365,8 @@ export function PulseProvider({ children }: { children: ReactNode }) {
     setAppErrors([]);
     setImages(null);
     setBuildInfo(null);
+    setDeviceContext(null);
+    setStalls(null);
     setBaselines([]);
     setDebugOptions([]);
     setDebugOptionsMessage(undefined);
@@ -521,6 +549,28 @@ export function PulseProvider({ children }: { children: ReactNode }) {
             break;
           case "buildInfo":
             setBuildInfo({ buildMode: msg.buildMode, probes: msg.probes ?? {} });
+            break;
+          case "deviceContext":
+            setDeviceContext({
+              available: msg.available,
+              platform: msg.platform,
+              buildMode: msg.buildMode,
+              locale: msg.locale,
+              textScale: msg.textScale,
+              appPackage: msg.appPackage,
+              display: msg.display,
+              extras: msg.extras,
+            });
+            break;
+          case "stalls":
+            setStalls({
+              available: msg.available,
+              active: msg.active,
+              thresholdMs: msg.thresholdMs,
+              total: msg.total ?? 0,
+              maxDurationMs: msg.maxDurationMs ?? 0,
+              stalls: msg.stalls ?? [],
+            });
             break;
           case "log": {
             const raw = msg.entry;
@@ -909,6 +959,8 @@ export function PulseProvider({ children }: { children: ReactNode }) {
       appErrors,
       images,
       buildInfo,
+      deviceContext,
+      stalls,
       baselines,
       debugOptions,
       debugOptionsMessage,
@@ -987,6 +1039,8 @@ export function PulseProvider({ children }: { children: ReactNode }) {
       appErrors,
       images,
       buildInfo,
+      deviceContext,
+      stalls,
       baselines,
       debugOptions,
       debugOptionsMessage,

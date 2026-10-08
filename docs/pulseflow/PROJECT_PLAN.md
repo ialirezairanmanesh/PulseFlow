@@ -30,7 +30,20 @@ DevTools and integrate data from popular pub.dev packages.
 
 ## Feature backlog (ranked by impact / effort)
 
-### P0 — High value, low effort
+### Package round (pulseflow_flutter 0.2) — in progress
+Ship app-side signals first; bridge/dashboard consume them over the wire.
+
+| # | Item | Layer | Status |
+|---|------|-------|--------|
+| A | `ext.pulseflow.getDeviceContext` — platform, display, locale, text scale, optional enricher | package + bridge | **doing** |
+| B | Custom scenario registry (`registerPulseFlowScenario`) + list/run | package | **doing** |
+| C | UI stall probe (`ext.pulseflow.getStallReport`) — main-isolate freeze > threshold | package + bridge | **doing** |
+| D | Real `networkBurst` default + URI query redact for secrets | package | **doing** |
+| E | Dashboard `/device` page + Problems stall cards | dashboard | later |
+| F | Platform-channel timing probe | package | later |
+| G | Shader / cold-start markers as first-class RPC | package | later |
+
+### P0 — High value, low effort (dashboard/DevOps)
 1. **CI budget-check GitHub Action**
    - Reuses `pulseflow_bridge/bin/pulseflow_check.dart` (already supports `--vm`, `--max-p95-build`, `--max-jank-ratio`, `--out`, exit codes 0/1/2).
    - Add `.github/workflows/perf-check.yml` that runs `make check` on PRs.
@@ -47,11 +60,10 @@ DevTools and integrate data from popular pub.dev packages.
    - Add `/logs` route + bridge `connect` for the VM Service `Logging` / `Extension` stream.
    - Shows runtime logs, assertion messages, framework text, filter by level.
 
-4. **Device context panel**
-   - New `/device` route + AI-context block.
-   - Leverage `device_info_plus`, `battery_plus`, `connectivity_plus`,
-     `package_info_plus` inside the app extension to expose device specs, battery
-     %, network type, app version.  Add an RPC `ext.pulseflow.getDeviceContext`.
+4. **Device context panel** (depends on package item A)
+   - New `/device` route + AI-context block consuming `deviceContext` wire messages.
+   - Optional app enricher can attach battery / connectivity / version without forcing
+     plugin deps into `pulseflow_flutter`.
 
 ### P2 — Nice-to-have polish
 5. **PDF export of agent report**
@@ -63,5 +75,6 @@ DevTools and integrate data from popular pub.dev packages.
      flag regressions automatically on `/history`.
 
 ## Execution order
-1. CI action  →  2. URL sharing  →  3. Logs panel  →  4. Device context
-   (implement in this order; each is independently shippable.)
+1. Package A–D (device / scenarios / stalls / network) → bridge wire
+2. CI action → URL sharing → Logs panel → `/device` UI
+   (each independently shippable.)

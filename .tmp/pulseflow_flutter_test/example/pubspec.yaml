@@ -1,0 +1,12 @@
+name: pulseflow_flutter_example
+description: Minimal app wiring the PulseFlow probes.
+publish_to: none
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  pulseflow_flutter:
+    path: ../

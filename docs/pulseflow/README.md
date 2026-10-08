@@ -131,14 +131,12 @@ payload.
 
 ## Widget probe + scenarios (Flutter package)
 
-Add the [`pulseflow_flutter`](https://github.com/ialirezairanmanesh/pulseflow_flutter) package
+Add the [`pulseflow_flutter`](https://pub.dev/packages/pulseflow_flutter) package
 to your app and register it from `main()`:
 
 ```yaml
 dependencies:
-  pulseflow_flutter:
-    git:
-      url: https://github.com/ialirezairanmanesh/pulseflow_flutter.git
+  pulseflow_flutter: ^0.2.0
 ```
 
 ```dart
@@ -152,12 +150,13 @@ void main() {
 
 For local PulseFlow development, clone the package next to this repo
 (`../pulseflow_flutter`) or set `PULSEFLOW_FLUTTER` — `make test-flutter` and
-`./redroid.sh` use that path.
+`./redroid.sh` use that path. You can also depend via `path:` or git while hacking
+on the package itself.
 
 The older single-file stub (`examples/pulseflow_extension.dart`) still works, but the package adds
 accurate frame timing (`addTimingsCallback`), refresh-rate-aware budgets, widget source locations
-(`file:line` via the widget inspector), HTTP capture (`HttpOverrides`), and leak signals
-(`FlutterMemoryAllocations`).
+(`file:line` via the widget inspector; **debug**), HTTP capture (`HttpOverrides`, redacted URIs),
+leak signals (`FlutterMemoryAllocations`), device context, UI stall detection, and custom scenarios.
 
 Hot-restart, reconnect PulseFlow. The bridge will:
 
@@ -172,20 +171,22 @@ Hot-restart, reconnect PulseFlow. The bridge will:
 | RPC | Purpose |
 | --- | --- |
 | `ext.pulseflow.getFrameStats` | Accurate engine frame timings + refresh rate/budget |
+| `ext.pulseflow.getDeviceContext` | Platform / display / locale (+ optional enricher extras) |
+| `ext.pulseflow.getStallReport` / `resetStallProbe` | Main-isolate freeze events |
 | `ext.pulseflow.getRebuildCauses` | Rebuild roots + attributed descendants |
 | `ext.pulseflow.getErrors` | Overflow / assertion / exception signatures |
 | `ext.pulseflow.getImageStats` | Image cache health + oversized decodes |
-| `ext.pulseflow.getNetworkLog` | Drain `HttpOverrides`-captured requests |
+| `ext.pulseflow.getNetworkLog` | Drain `HttpOverrides`-captured requests (URI secrets redacted) |
 | `ext.pulseflow.getLeakReport` | Outstanding (created-not-disposed) objects |
 | `ext.pulseflow.injectInvoices` | Stress: append invoices (`count`) |
 | `ext.pulseflow.spikeCpu` | Stress: busy-loop (`millis`) |
 | `ext.pulseflow.allocateMemory` | Stress: retain buffers (`megabytes`) |
 | `ext.pulseflow.startWidgetProbe` / `stopWidgetProbe` / `resetWidgetProbe` / `setWidgetProbeFrozen` / `getHotWidgets` | Rebuild probe (with `sourceUri`/`sourceLine`) |
-| `ext.pulseflow.listScenarios` | List built-in scenarios |
+| `ext.pulseflow.listScenarios` | List built-in + app-registered scenarios |
 | `ext.pulseflow.runScenario` | Run scenario by `id` (+ params) |
 | `ext.pulseflow.stopScenario` | Stop running scenario |
 
-Built-in scenarios: `scrollStorm`, `routeThrash`, `listFlood`, `animationFlood`, `retainMemory`, `networkBurst` (stubbed unless you set `PulseFlowStressState.instance.onNetworkBurst`).
+Built-in scenarios: `scrollStorm`, `routeThrash`, `listFlood`, `animationFlood`, `retainMemory`, `networkBurst` (real HTTP GETs by default, or `PulseFlowStressState.instance.onNetworkBurst`). Register app scenarios with `registerPulseFlowScenario()`.
 
 Without the package, Build/Raster/memory/CPU/timeline still work via VM Service; Problems explains that the probe is missing; Lab scenarios stay disabled.
 

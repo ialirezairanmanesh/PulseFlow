@@ -74,6 +74,8 @@ interface CapabilityMap {
   pulseExtension: boolean;
   scenarios: boolean;
   widgetProbe: boolean;
+  deviceContext: boolean;
+  stalls: boolean;
 }
 
 interface AllocationClassStat {
@@ -112,6 +114,8 @@ const DEFAULT_CAPS: CapabilityMap = {
   pulseExtension: false,
   scenarios: false,
   widgetProbe: false,
+  deviceContext: false,
+  stalls: false,
 };
 
 const MOCK_SCENARIOS: ScenarioInfo[] = [
@@ -513,6 +517,8 @@ function mockCapabilities(): CapabilityMap {
     pulseExtension: true,
     scenarios: true,
     widgetProbe: true,
+    deviceContext: true,
+    stalls: true,
   };
 }
 
@@ -1289,6 +1295,10 @@ async function probeCapabilities(session: Session) {
   caps.pulseExtension = session.extensionMethods.some((m) => m.startsWith("ext.pulseflow."));
   caps.scenarios = session.extensionMethods.includes("ext.pulseflow.listScenarios");
   caps.widgetProbe = session.extensionMethods.includes("ext.pulseflow.getHotWidgets");
+  caps.deviceContext = session.extensionMethods.includes(
+    "ext.pulseflow.getDeviceContext",
+  );
+  caps.stalls = session.extensionMethods.includes("ext.pulseflow.getStallReport");
 
   session.caps = caps;
   send(session.client, {

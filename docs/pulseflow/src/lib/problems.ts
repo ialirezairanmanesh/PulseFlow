@@ -143,7 +143,7 @@ export function buildProblems(input: {
       title: "Widget probe not available",
       detail: "Without the PulseFlow extension, rebuild ranks and screen tips stay empty.",
       action:
-        "Add package:pulseflow_flutter, call registerPulseFlow(), hot-restart, then Connect again.",
+        "Add pulseflow_flutter from pub.dev, call registerPulseFlow(), hot-restart, then Connect again.",
     });
   }
 
