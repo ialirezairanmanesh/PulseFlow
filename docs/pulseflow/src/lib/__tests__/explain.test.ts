@@ -87,4 +87,18 @@ describe("explainProblem", () => {
     expect(why).toMatch(/network\/UX/i);
     expect(why).not.toMatch(/\d+\.\d+\/s/);
   });
+
+  it("explains UI stalls as main-thread blocks over threshold", () => {
+    const why = explainProblem(
+      problem({
+        kind: "ui_stall",
+        relatedBuildMs: 840,
+        route: "/home",
+      }),
+      ctx,
+    );
+    expect(why).toContain("840 ms");
+    expect(why).toContain("/home");
+    expect(why).toMatch(/threshold|freeze/i);
+  });
 });

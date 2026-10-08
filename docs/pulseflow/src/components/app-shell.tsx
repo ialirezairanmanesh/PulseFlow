@@ -18,6 +18,7 @@ const NAV = [
   { href: "/problems", label: "Problems" },
   { href: "/widgets", label: "Widgets" },
   { href: "/frames", label: "Frames" },
+  { href: "/device", label: "Device" },
   { href: "/cpu", label: "CPU" },
   { href: "/memory", label: "Memory" },
   { href: "/network", label: "Network" },

@@ -232,6 +232,14 @@ interface Session {
     label: string;
   }>;
   mockDebugOptions: Record<string, boolean>;
+  mockStallTotal: number;
+  mockStallMaxMs: number;
+  mockStallEntries: Array<{
+    id: string;
+    durationMs: number;
+    atMs: number;
+    route?: string;
+  }>;
 }
 
 function send(client: WebSocket, payload: unknown) {
@@ -578,8 +586,64 @@ function startMock(session: Session) {
   }
   emitMockDebugOptions(session);
   emitMockHotWidgets(session);
+  session.mockStallTotal = 0;
+  session.mockStallMaxMs = 0;
+  session.mockStallEntries = [];
+  emitMockDeviceContext(session);
+  emitMockStalls(session, true);
   session.mockTimer = setInterval(() => emitMockMetrics(session), 500);
-  session.hotWidgetTimer = setInterval(() => emitMockHotWidgets(session), 1000);
+  session.hotWidgetTimer = setInterval(() => {
+    emitMockHotWidgets(session);
+    emitMockStalls(session);
+  }, 1000);
+}
+
+function emitMockDeviceContext(session: Session) {
+  send(session.client, {
+    type: "deviceContext",
+    available: true,
+    platform: "android",
+    buildMode: "debug",
+    locale: "en-US",
+    textScale: 1.0,
+    appPackage: "demo_app",
+    display: {
+      refreshRate: 60,
+      budgetMs: FRAME_BUDGET_MS,
+      devicePixelRatio: 2.75,
+      physicalWidth: 1080,
+      physicalHeight: 2400,
+    },
+    extras: { demo: true },
+  });
+}
+
+function emitMockStalls(session: Session, force = false) {
+  const spike = force || Math.random() > 0.85;
+  if (spike) {
+    const t = Date.now();
+    const durationMs = Number((320 + Math.random() * 200).toFixed(1));
+    session.mockStallTotal += 1;
+    session.mockStallMaxMs = Math.max(session.mockStallMaxMs, durationMs);
+    session.mockStallEntries.push({
+      id: `stall-mock-${t}`,
+      durationMs,
+      atMs: t,
+      route: Math.random() > 0.5 ? "/home" : "/invoices",
+    });
+    if (session.mockStallEntries.length > 8) {
+      session.mockStallEntries = session.mockStallEntries.slice(-8);
+    }
+  }
+  send(session.client, {
+    type: "stalls",
+    available: true,
+    active: true,
+    thresholdMs: 250,
+    total: session.mockStallTotal,
+    maxDurationMs: session.mockStallMaxMs,
+    stalls: session.mockStallEntries,
+  });
 }
 
 async function listenStreams(session: Session) {
@@ -2559,6 +2623,9 @@ function attachClient(client: WebSocket) {
     scenarioRunning: null,
     timelineMarkers: [],
     mockDebugOptions: Object.fromEntries(DEBUG_OPTION_DEFS.map((d) => [d.id, false])),
+    mockStallTotal: 0,
+    mockStallMaxMs: 0,
+    mockStallEntries: [],
   };
 
   send(client, {

@@ -28,6 +28,7 @@ export function WidgetsTable() {
     scenarioResult,
     scenarioRunning,
     appErrors,
+    stalls,
   } = usePulse();
 
   const currentRoute = hot?.currentRoute;
@@ -101,6 +102,7 @@ export function WidgetsTable() {
         scenarioRunning,
         rebuildCauses,
         errors: appErrors,
+        stalls,
       }),
     [
       hot,
@@ -114,6 +116,7 @@ export function WidgetsTable() {
       scenarioRunning,
       rebuildCauses,
       appErrors,
+      stalls,
     ],
   );
 

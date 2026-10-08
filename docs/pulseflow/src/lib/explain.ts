@@ -88,6 +88,11 @@ export function explainProblem(p: PerformanceProblem, ctx: ExplainContext): stri
     case "missing_probe":
       return "The widget probe is not registered, so rebuild ranks, causes, and source locations stay empty until it is added.";
 
+    case "ui_stall":
+      return `Main thread blocked for up to ${ms(p.relatedBuildMs, 0)}${
+        p.route ? ` (last seen on ${p.route})` : ""
+      } — longer than the stall threshold, so frames and input freeze until the isolate resumes.`;
+
     default:
       return p.detail;
   }

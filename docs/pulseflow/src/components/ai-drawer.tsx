@@ -36,6 +36,8 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
     buildInfo,
     leaks,
     images,
+    deviceContext,
+    stalls,
   } = usePulse();
 
   const [settings, setSettings] = useState<AiSettingsView | null>(null);
@@ -79,6 +81,7 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
         scenarioRunning,
         rebuildCauses,
         errors: appErrors,
+        stalls,
       }),
     [
       hot,
@@ -92,6 +95,7 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
       scenarioRunning,
       rebuildCauses,
       appErrors,
+      stalls,
     ],
   );
 
@@ -112,6 +116,8 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
         network,
         errors: appErrors,
         buildInfo,
+        deviceContext,
+        stalls,
       }),
     [
       section,
@@ -126,6 +132,8 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
       network,
       appErrors,
       buildInfo,
+      deviceContext,
+      stalls,
     ],
   );
 

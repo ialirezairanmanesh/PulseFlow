@@ -60,6 +60,7 @@ describe("sectionFromPath", () => {
     expect(sectionFromPath("/memory/")).toBe("memory");
     expect(sectionFromPath("/network")).toBe("network");
     expect(sectionFromPath("/problems")).toBe("problems");
+    expect(sectionFromPath("/device")).toBe("device");
   });
 
   it("defaults unknown paths to problems", () => {
@@ -74,7 +75,49 @@ describe("buildSectionContext", () => {
     expect(context).toContain("InvoiceCard");
     expect(context).toContain("frame-budget track");
     expect(context).toContain("latency track");
+    expect(context).toContain("Device context");
+    expect(context).toContain("UI stalls");
     expect(context).not.toContain("NaN");
+  });
+
+  it("includes device + stalls on the device section", () => {
+    const context = buildSectionContext(
+      "device",
+      state({
+        deviceContext: {
+          available: true,
+          platform: "android",
+          buildMode: "profile",
+          locale: "fa-IR",
+          textScale: 1.1,
+          appPackage: "com.example.app",
+          display: { refreshRate: 120, budgetMs: 8.33, devicePixelRatio: 3 },
+        },
+        stalls: {
+          available: true,
+          thresholdMs: 250,
+          total: 2,
+          maxDurationMs: 600,
+          stalls: [{ id: "s1", durationMs: 600, atMs: 1, route: "/home" }],
+        },
+        problems: buildProblems({
+          hot: null,
+          hotAvailable: true,
+          gcEvents: [],
+          stalls: {
+            available: true,
+            thresholdMs: 250,
+            total: 2,
+            maxDurationMs: 600,
+            stalls: [{ id: "s1", durationMs: 600, atMs: 1, route: "/home" }],
+          },
+        }),
+      }),
+    );
+    expect(context).toContain("android");
+    expect(context).toContain("120 Hz");
+    expect(context).toContain("600");
+    expect(context).toMatch(/UI freeze|main-isolate stall/i);
   });
 
   it("summarises frame timing and still attaches widget/route evidence", () => {

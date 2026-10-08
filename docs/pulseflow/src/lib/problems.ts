@@ -14,8 +14,18 @@ import type {
   NetworkRequest,
   PerformanceProblem,
   ScenarioResult,
+  StallEntry,
   WidgetRebuildStat,
 } from "@/lib/types";
+
+/** Stall probe summary already held in PulseStore. */
+export interface StallsInput {
+  available: boolean;
+  thresholdMs?: number;
+  total: number;
+  maxDurationMs: number;
+  stalls: StallEntry[];
+}
 
 export function tipForWidget(
   name: string,
@@ -118,6 +128,7 @@ export function buildProblems(input: {
   scenarioRunning?: string | null;
   rebuildCauses?: { attributed: AttributedRebuild[] } | null;
   errors?: ErrorEntry[] | null;
+  stalls?: StallsInput | null;
 }): PerformanceProblem[] {
   const {
     hot,
@@ -132,6 +143,7 @@ export function buildProblems(input: {
     scenarioRunning,
     rebuildCauses,
     errors,
+    stalls,
   } = input;
   const problems: PerformanceProblem[] = [];
 
@@ -324,6 +336,31 @@ export function buildProblems(input: {
         : "Fix the exception; expand the stack frames for the source.",
       route: e.route,
       ratePerSec: e.count,
+    });
+  }
+
+  if (stalls?.available && stalls.total > 0) {
+    const threshold = stalls.thresholdMs ?? 250;
+    const routes = [
+      ...new Set(
+        stalls.stalls
+          .map((s) => s.route)
+          .filter((r): r is string => Boolean(r) && r !== "(unnamed)"),
+      ),
+    ].slice(0, 4);
+    const routeLabel = routes.length ? ` · last routes: ${routes.join(", ")}` : "";
+    problems.push({
+      id: "ui_stall",
+      severity:
+        stalls.maxDurationMs >= 1000 || stalls.total >= 5 ? "high" : "medium",
+      kind: "ui_stall",
+      title: "UI freeze / main-isolate stall",
+      detail: `${stalls.total} stall${stalls.total === 1 ? "" : "s"} · max ${stalls.maxDurationMs.toFixed(0)} ms (threshold ${threshold} ms)${routeLabel}`,
+      action:
+        "Find synchronous work on the UI isolate (JSON parse, file I/O, blocking platform channels). Move it off the main isolate, then re-check Stalls.",
+      relatedBuildMs: stalls.maxDurationMs,
+      route: routes[0],
+      ratePerSec: stalls.total,
     });
   }
 

@@ -13,6 +13,7 @@ import { compareByHeatThenName, widgetHeat } from "@/lib/widget-heat";
 import type { AiLanguage } from "@/lib/ai-providers";
 import type {
   CpuProfileSummary,
+  DeviceDisplayInfo,
   ErrorEntry,
   HotWidgetsPayload,
   ImageCacheStats,
@@ -23,16 +24,37 @@ import type {
   OversizedImage,
   PerformanceProblem,
   ProbeAvailability,
+  StallEntry,
 } from "@/lib/types";
 
 export type AiSection =
   | "problems"
   | "widgets"
   | "frames"
+  | "device"
   | "cpu"
   | "memory"
   | "network"
   | "report";
+
+export interface AiDeviceContext {
+  available: boolean;
+  platform?: string;
+  buildMode?: string;
+  locale?: string;
+  textScale?: number;
+  appPackage?: string;
+  display?: DeviceDisplayInfo;
+  extras?: Record<string, unknown>;
+}
+
+export interface AiStallsContext {
+  available: boolean;
+  thresholdMs?: number;
+  total: number;
+  maxDurationMs: number;
+  stalls: StallEntry[];
+}
 
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -58,12 +80,15 @@ export interface AiContextState {
   network?: NetworkRequest[];
   errors?: ErrorEntry[];
   buildInfo?: { buildMode: string; probes: ProbeAvailability } | null;
+  deviceContext?: AiDeviceContext | null;
+  stalls?: AiStallsContext | null;
 }
 
 export const SECTION_TITLES: Record<AiSection, string> = {
   problems: "Problems",
   widgets: "Widgets",
   frames: "Frames",
+  device: "Device",
   cpu: "CPU",
   memory: "Memory",
   network: "Network",
@@ -72,16 +97,18 @@ export const SECTION_TITLES: Record<AiSection, string> = {
 
 const SECTION_HINTS: Record<AiSection, string> = {
   problems:
-    "the ranked Problems list and session health — cover every track present in the brief (frame, network, memory, errors)",
+    "the ranked Problems list and session health — cover every track present in the brief (frame, network, memory, errors, stalls)",
   widgets:
     "per-widget rebuild problems on the current screen only: problem count/severity, rebuild rate, share, source, and cause — prioritize the reddest widgets. Do not review HTTP, CPU profiles, heap, or other tabs",
   frames:
-    "frame timing (build/raster/jank) against the frame budget, and frame-track problems — tie to hot widgets when listed. Do not review HTTP latency or heap/leaks",
+    "frame timing (build/raster/jank) against the frame budget, UI stalls when listed, and frame-track problems — tie to hot widgets when listed. Do not review HTTP latency or heap/leaks",
+  device:
+    "device/platform/display context and UI stall evidence only. Do not review HTTP, CPU profiles, or heap",
   cpu: "CPU hotspots by self-time and cpu_hotspot problems — tie to rebuild cost only when widget evidence is in the brief. Do not review HTTP or memory",
   memory: "heap growth, leaks, and image-cache waste only. Do not review rebuilds, frames, or HTTP",
   network:
     "slow HTTP requests (latency / UX wait) only. Do not claim latency equals build ms, and do not review widget rebuilds or frame budgets as the main topic",
-  report: "the whole session across performance, widgets, CPU, memory, and network",
+  report: "the whole session across performance, widgets, CPU, memory, network, and device/stalls",
 };
 
 const MAX = {
@@ -115,6 +142,11 @@ export const SECTION_QUICK_PROMPTS: Record<AiSection, readonly string[]> = {
     "Which screens/widgets in this brief drive build or jank cost?",
     "What should I re-measure on the Frames tab after a fix?",
   ],
+  device: [
+    "Summarize platform, display budget, and any UI stalls. What should I check first on Device?",
+    "Do text scale or refresh rate help explain frame budget pressure?",
+    "If stalls are present, what main-isolate work should I investigate?",
+  ],
   cpu: [
     "Which CPU hotspots matter most by self-time? Give concrete Flutter/Dart fixes.",
     "Do any hotspots look like UI rebuild cost? Only cite widgets listed in the brief.",
@@ -139,7 +171,9 @@ const SECTION_DEFAULT_QUESTION: Record<AiSection, string> = {
   widgets:
     "Stay on the Widgets view: rebuild pressure and widget problems on this screen only. Rank by problem count and rebuild rate/share. For each hot widget name the route, measured evidence, and a concrete Flutter fix. If no widgets have problems or meaningful rebuild rate, say this screen is quiet for rebuilds and stop — do not invent HTTP findings, network fixes, or widget names. Cap Findings at 5 and Fixes at 3. Do not invent numbers, libraries, or file paths.",
   frames:
-    "Stay on the Frames view: P95 build/raster, jank, and frame-track problems only. Tie findings to hot widgets only when they appear in the brief. Do not discuss HTTP latency or memory leaks. Cap Findings at 5 and Fixes at 3. Do not invent numbers, libraries, or file paths.",
+    "Stay on the Frames view: P95 build/raster, jank, stalls when listed, and frame-track problems only. Tie findings to hot widgets only when they appear in the brief. Do not discuss HTTP latency or memory leaks. Cap Findings at 5 and Fixes at 3. Do not invent numbers, libraries, or file paths.",
+  device:
+    "Stay on the Device view: platform/display/locale and UI stall evidence only. Cap Findings at 5 and Fixes at 3. Do not invent numbers, libraries, or file paths.",
   cpu: "Stay on the CPU view: hotspot self-time and cpu_hotspot problems only. Mention widgets only if listed in the brief. Do not discuss HTTP or heap. Cap Findings at 5 and Fixes at 3. Do not invent numbers, libraries, or file paths.",
   memory:
     "Stay on the Memory view: heap growth, leaks, and image cache only. Do not discuss rebuilds, frames, or HTTP. Cap Findings at 5 and Fixes at 3. Do not invent numbers, libraries, or file paths.",
@@ -153,6 +187,7 @@ export function sectionFromPath(pathname: string): AiSection {
   const clean = pathname.replace(/\/+$/, "");
   if (clean.startsWith("/widgets")) return "widgets";
   if (clean.startsWith("/frames")) return "frames";
+  if (clean.startsWith("/device")) return "device";
   if (clean.startsWith("/cpu")) return "cpu";
   if (clean.startsWith("/memory")) return "memory";
   if (clean.startsWith("/network")) return "network";
@@ -212,6 +247,7 @@ function trackOf(kind: PerformanceProblem["kind"]): "frame" | "network" | "memor
     case "high_raster":
     case "cpu_hotspot":
     case "scenario_jank":
+    case "ui_stall":
       return "frame";
     default:
       return "other";
@@ -432,6 +468,68 @@ function framesBlock(state: AiContextState): string {
   return lines.join("\n");
 }
 
+function deviceBlock(state: AiContextState): string {
+  const d = state.deviceContext;
+  if (!d?.available) {
+    return "## Device context\n_device context unavailable (pulseflow_flutter ≥ 0.2 / getDeviceContext)_";
+  }
+  const lines = [
+    "## Device context",
+    `- Platform: ${d.platform ?? "—"}`,
+    `- Build mode: ${d.buildMode ?? "—"}`,
+    `- Locale: ${d.locale ?? "—"}`,
+    `- Text scale: ${d.textScale != null ? d.textScale.toFixed(2) : "—"}`,
+    `- App package: ${d.appPackage ?? "—"}`,
+  ];
+  const display = d.display;
+  if (display) {
+    if (display.refreshRate != null) lines.push(`- Refresh rate: ${display.refreshRate} Hz`);
+    if (display.budgetMs != null) lines.push(`- Frame budget: ${display.budgetMs.toFixed(2)} ms`);
+    if (display.devicePixelRatio != null) {
+      lines.push(`- DPR: ${display.devicePixelRatio.toFixed(2)}`);
+    }
+    if (display.physicalWidth != null && display.physicalHeight != null) {
+      lines.push(
+        `- Physical size: ${Math.round(display.physicalWidth)}×${Math.round(display.physicalHeight)}`,
+      );
+    }
+  }
+  const extras = d.extras ? Object.entries(d.extras).filter(([, v]) => v != null) : [];
+  if (extras.length) {
+    lines.push(
+      `- Extras: ${extras
+        .slice(0, 8)
+        .map(([k, v]) => `${k}=${typeof v === "object" ? JSON.stringify(v) : String(v)}`)
+        .join(", ")}`,
+    );
+  }
+  return lines.join("\n");
+}
+
+function stallsBlock(state: AiContextState): string {
+  const s = state.stalls;
+  if (!s?.available) {
+    return "## UI stalls\n_stall probe unavailable_";
+  }
+  if (s.total <= 0) {
+    return `## UI stalls\n_none over ${s.thresholdMs ?? 250} ms threshold_`;
+  }
+  const routes = [
+    ...new Set(s.stalls.map((e) => e.route).filter((r): r is string => Boolean(r))),
+  ].slice(0, 4);
+  const lines = [
+    "## UI stalls (main-isolate freeze)",
+    `- Total: ${s.total} · max ${s.maxDurationMs.toFixed(0)} ms · threshold ${s.thresholdMs ?? 250} ms`,
+  ];
+  if (routes.length) lines.push(`- Last routes: ${routes.join(", ")}`);
+  for (const e of s.stalls.slice(-5)) {
+    lines.push(
+      `- ${e.durationMs.toFixed(0)} ms${e.route ? ` on ${e.route}` : ""} @ ${new Date(e.atMs).toISOString()}`,
+    );
+  }
+  return lines.join("\n");
+}
+
 function cpuBlock(profile?: CpuProfileSummary | null): string {
   if (!profile?.topFunctions?.length) return "## CPU hotspots\n_no CPU profile captured_";
   return [
@@ -522,6 +620,8 @@ export function buildSectionContext(section: AiSection, state: AiContextState): 
         problemsBlock(state.problems),
         errorsBlock(state.errors),
         framesBlock(state),
+        stallsBlock(state),
+        deviceBlock(state),
         networkBlock(state.network),
         hotWidgets,
       ]
@@ -549,6 +649,7 @@ export function buildSectionContext(section: AiSection, state: AiContextState): 
           note: "Out of scope here: HTTP latency and memory — use Network / Memory tabs.",
         }),
         framesBlock(state),
+        stallsBlock(state),
         scopedProblemsBlock(
           "Frame problems (ranked)",
           frameProblems,
@@ -558,6 +659,22 @@ export function buildSectionContext(section: AiSection, state: AiContextState): 
       ]
         .filter(Boolean)
         .join("\n\n");
+    case "device":
+      return [
+        sessionBlock(state, {
+          problems: state.problems.filter((p) => p.kind === "ui_stall"),
+          title: "Device / stall health",
+          note: "Out of scope here: HTTP, CPU profiles, and heap — use those tabs.",
+          includeBudgets: true,
+        }),
+        deviceBlock(state),
+        stallsBlock(state),
+        scopedProblemsBlock(
+          "Stall problems (ranked)",
+          state.problems.filter((p) => p.kind === "ui_stall"),
+          "no ui_stall problems ranked",
+        ),
+      ].join("\n\n");
     case "cpu":
       return [
         sessionBlock(state, {
@@ -607,7 +724,12 @@ export function buildSectionContext(section: AiSection, state: AiContextState): 
         ),
       ].join("\n\n");
     case "report":
-      return [sessionBlock(state), reportBlock(state)].join("\n\n");
+      return [
+        sessionBlock(state),
+        deviceBlock(state),
+        stallsBlock(state),
+        reportBlock(state),
+      ].join("\n\n");
   }
 }
 
@@ -622,8 +744,12 @@ const SECTION_SCOPE_RULES: Record<AiSection, string[]> = {
     "If the rebuild list is empty or quiet, say so; do not invent widget names or fill with other-tab topics.",
   ],
   frames: [
-    "This is the Frames tab — stay on build/raster/jank and frame-track problems.",
+    "This is the Frames tab — stay on build/raster/jank, UI stalls when listed, and frame-track problems.",
     "Do not review HTTP latency or memory growth/leaks.",
+  ],
+  device: [
+    "This is the Device tab — stay on platform/display context and UI stalls.",
+    "Do not review HTTP latency, CPU profiles, or heap/leaks.",
   ],
   cpu: [
     "This is the CPU tab — stay on hotspot self-time and cpu_hotspot problems.",
@@ -647,6 +773,7 @@ const SECTION_SUMMARY_RULE: Record<AiSection, string> = {
   widgets:
     "1. ## Summary — 2–3 sentences on rebuild/widget health on this screen (not other tabs)",
   frames: "1. ## Summary — 2–3 sentences on frame-budget health (build/raster/jank)",
+  device: "1. ## Summary — 2–3 sentences on device/display context and stall risk",
   cpu: "1. ## Summary — 2–3 sentences on CPU hotspot risk from the profile",
   memory: "1. ## Summary — 2–3 sentences on heap/leak/image-cache risk",
   network: "1. ## Summary — 2–3 sentences on HTTP latency / UX wait risk",
@@ -657,6 +784,7 @@ const SECTION_FINDINGS_RULE: Record<AiSection, string> = {
   problems: "2. ## Findings — up to 5 bullets with measured evidence (widget + route when relevant)",
   widgets: "2. ## Findings — up to 5 bullets with widget + route + rebuild evidence",
   frames: "2. ## Findings — up to 5 bullets with frame metrics and related widgets when listed",
+  device: "2. ## Findings — up to 5 bullets with platform/display/stall evidence",
   cpu: "2. ## Findings — up to 5 bullets with hotspot names and self-time %",
   memory: "2. ## Findings — up to 5 bullets with class/image names and byte evidence",
   network: "2. ## Findings — up to 5 bullets with method + URI + latency ms",

@@ -106,6 +106,7 @@ export type ProblemsSnapshot = {
   network?: NetworkRequest[];
   scenarioResult?: ScenarioResult | null;
   scenarioRunning?: string | null;
+  stalls?: StallsState | null;
 };
 
 function emptyHot(partial?: Partial<HotWidgetsPayload>): HotWidgetsPayload {
@@ -283,6 +284,7 @@ export function PulseProvider({ children }: { children: ReactNode }) {
   const networkRef = useRef<NetworkRequest[]>([]);
   const scenarioResultRef = useRef<ScenarioResult | null>(null);
   const scenarioRunningRef = useRef<string | null>(null);
+  const stallsRef = useRef<StallsState | null>(null);
 
   const connected = status === "connected";
 
@@ -310,6 +312,9 @@ export function PulseProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     scenarioResultRef.current = scenarioResult;
   }, [scenarioResult]);
+  useEffect(() => {
+    stallsRef.current = stalls;
+  }, [stalls]);
 
   // Sync a restored shared view when the URL hash changes (e.g. user opens a link).
   useEffect(() => {
@@ -683,6 +688,7 @@ export function PulseProvider({ children }: { children: ReactNode }) {
             network: [...networkRef.current],
             scenarioResult: scenarioResultRef.current,
             scenarioRunning: scenarioRunningRef.current,
+            stalls: stallsRef.current,
           });
           setControlMessage("Frozen — rankings held still");
           setHotMessage(undefined);
@@ -857,6 +863,7 @@ export function PulseProvider({ children }: { children: ReactNode }) {
       points: pointsRef.current,
       scenarioResult: scenarioResultRef.current,
       scenarioRunning: scenarioRunningRef.current,
+      stalls: stallsRef.current,
     }).length;
     const baseline = computeBaselineMetrics({
       points: pointsRef.current,

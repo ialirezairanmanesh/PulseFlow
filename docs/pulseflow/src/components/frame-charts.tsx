@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import {
   Area,
   AreaChart,
@@ -24,6 +25,7 @@ export function FrameCharts() {
     timelineMessage,
     exportTimeline,
     capabilities,
+    stalls,
   } = usePulse();
   const normalized = points.map(normalizePoint);
   const chartData = normalized.map((p) => ({
@@ -36,6 +38,14 @@ export function FrameCharts() {
   const latest = normalized[normalized.length - 1];
   const jankCount = normalized.filter((p) => p.jank).length;
   const health = healthFromPoint(latest, jankCount);
+  const stallRoutes =
+    stalls?.available && stalls.total > 0
+      ? [
+          ...new Set(
+            stalls.stalls.map((s) => s.route).filter((r): r is string => Boolean(r)),
+          ),
+        ].slice(-3)
+      : [];
 
   const toneClass =
     health.tone === "good"
@@ -74,6 +84,24 @@ export function FrameCharts() {
 
       {timelineMessage && (
         <p className="text-sm text-[var(--ink-muted)]">{timelineMessage}</p>
+      )}
+
+      {stalls?.available && stalls.total > 0 && (
+        <section className="rounded-xl border border-rose-400/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-100">
+          <div className="text-[10px] uppercase tracking-[0.14em] opacity-80">
+            UI stalls
+          </div>
+          <p className="mt-1">
+            {stalls.total} main-isolate stall{stalls.total === 1 ? "" : "s"} · max{" "}
+            {stalls.maxDurationMs.toFixed(0)} ms (threshold {stalls.thresholdMs ?? 250}{" "}
+            ms)
+            {stallRoutes.length ? ` · ${stallRoutes.join(", ")}` : ""}
+            {" · "}
+            <Link href="/problems" className="underline-offset-2 hover:underline">
+              see Problems
+            </Link>
+          </p>
+        </section>
       )}
 
       {timelineMarkers.length > 0 && (

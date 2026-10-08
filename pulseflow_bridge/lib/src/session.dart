@@ -152,6 +152,9 @@ class BridgeSession {
   final Map<String, bool> _mockDebugOptions = <String, bool>{
     for (final Map<String, String> d in _debugOptionDefs) d['id']!: false,
   };
+  int _mockStallTotal = 0;
+  double _mockStallMaxMs = 0;
+  final List<Map<String, Object?>> _mockStallEntries = <Map<String, Object?>>[];
 
   bool _closed = false;
   double _refreshRate = 60;
@@ -2083,8 +2086,11 @@ class BridgeSession {
         'deviceContext': true,
       },
     });
+    _mockStallTotal = 0;
+    _mockStallMaxMs = 0;
+    _mockStallEntries.clear();
     _emitMockDeviceContext();
-    _emitMockStalls();
+    _emitMockStalls(force: true);
     for (final String id in _mockDebugOptions.keys) {
       _mockDebugOptions[id] = false;
     }
@@ -2124,26 +2130,31 @@ class BridgeSession {
     });
   }
 
-  void _emitMockStalls() {
+  void _emitMockStalls({bool force = false}) {
     final int t = DateTime.now().millisecondsSinceEpoch;
-    final bool spike = _rng.nextDouble() > 0.85;
+    final bool spike = force || _rng.nextDouble() > 0.85;
+    if (spike) {
+      final double duration = round2(320 + _rng.nextDouble() * 200);
+      _mockStallTotal += 1;
+      if (duration > _mockStallMaxMs) _mockStallMaxMs = duration;
+      _mockStallEntries.add(<String, Object?>{
+        'id': 'stall-mock-$t',
+        'durationMs': duration,
+        'atMs': t,
+        'route': _rng.nextBool() ? '/home' : '/invoices',
+      });
+      if (_mockStallEntries.length > 8) {
+        _mockStallEntries.removeAt(0);
+      }
+    }
     _send(<String, Object?>{
       'type': 'stalls',
       'available': true,
       'active': true,
       'thresholdMs': 250,
-      'total': spike ? 1 : 0,
-      'maxDurationMs': spike ? 320 + _rng.nextDouble() * 200 : 0,
-      'stalls': spike
-          ? <Object?>[
-              <String, Object?>{
-                'id': 'stall-mock-$t',
-                'durationMs': round2(320 + _rng.nextDouble() * 200),
-                'atMs': t,
-                'route': '/home',
-              },
-            ]
-          : <Object?>[],
+      'total': _mockStallTotal,
+      'maxDurationMs': _mockStallMaxMs,
+      'stalls': List<Object?>.from(_mockStallEntries),
     });
   }
 

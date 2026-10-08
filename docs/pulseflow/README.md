@@ -60,9 +60,10 @@ Demo mode hides the live stream (no ADB serial). Collapse the pane with the head
 | Route | Purpose |
 | --- | --- |
 | `/` | Connect / discover / demo. Redirects to `/problems` when already connected |
-| `/problems` | **Primary.** Health verdict + "Fix this next" plan + ranked issues, Record / Freeze, link to Report |
+| `/problems` | **Primary.** Health verdict + "Fix this next" plan + ranked issues (incl. UI stalls), Record / Freeze, link to Report |
 | `/widgets` | Rebuild table (route, app-only, during-jank filters) |
 | `/frames` | Build/Raster charts, markers, Export Perfetto |
+| `/device` | Platform / display / locale + UI stall probe summary |
 | `/cpu` | CPU record (3/5/10s), top functions, flamegraph |
 | `/memory` | Heap chart + Snapshots / Diff / Leaks tabs |
 | `/network` | Full HTTP list, waterfall, slowest endpoints |
@@ -103,9 +104,10 @@ The dashboard can review any section with **your own AI provider key** (none is 
   **Google Gemini** — set the model, paste the key, choose the answer language (فارسی / English), then
   **Test connection**.
 - **Use** the **Ask AI** button in the header on any page: a drawer opens, detects the current section
-  (Problems, Widgets, Frames, CPU, Memory, Network, Report), sends that view's data plus widget/route
-  evidence when available, and streams a full structured review (Summary → Findings → Fixes → Verify).
-  Answers name widgets as `` `Widget` on `/route` ``; follow-ups keep the conversation.
+  (Problems, Widgets, Frames, Device, CPU, Memory, Network, Report), sends that view's data plus
+  widget/route (and device/stall) evidence when available, and streams a full structured review
+  (Summary → Findings → Fixes → Verify). Answers name widgets as `` `Widget` on `/route` ``;
+  follow-ups keep the conversation.
 
 **Privacy:** the key is stored server-side in `.data/ai-settings.json` (git-ignored) and is used only by
 the local `/api/ai/*` proxy routes — it is never sent to the browser, and responses/errors redact it.

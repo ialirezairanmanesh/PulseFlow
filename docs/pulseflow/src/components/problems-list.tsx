@@ -32,6 +32,7 @@ export function ProblemsList() {
     rebuildCauses,
     appErrors,
     buildInfo,
+    stalls,
     sharedView,
     clearShared,
   } = usePulse();
@@ -84,6 +85,7 @@ export function ProblemsList() {
           scenarioRunning: input.scenarioRunning,
           rebuildCauses,
           errors: appErrors,
+          stalls: probeFrozen && problemsSnapshot ? problemsSnapshot.stalls : stalls,
         });
 
   const verdict = isSharedView

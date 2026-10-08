@@ -63,6 +63,47 @@ describe("buildProblems", () => {
     expect(problems.some((p) => p.kind === "missing_probe")).toBe(true);
   });
 
+  it("ranks a UI stall when total > 0", () => {
+    const problems = buildProblems({
+      hot: null,
+      hotAvailable: true,
+      gcEvents: [],
+      stalls: {
+        available: true,
+        thresholdMs: 250,
+        total: 3,
+        maxDurationMs: 840,
+        stalls: [
+          { id: "1", durationMs: 400, atMs: 1, route: "/home" },
+          { id: "2", durationMs: 840, atMs: 2, route: "/invoices" },
+        ],
+      },
+    });
+    const stall = problems.find((p) => p.kind === "ui_stall");
+    expect(stall).toBeTruthy();
+    expect(stall!.title).toMatch(/UI freeze/i);
+    expect(stall!.detail).toContain("840");
+    expect(stall!.detail).toContain("250");
+    expect(stall!.detail).toContain("/invoices");
+    expect(stall!.why).toMatch(/main thread|blocked/i);
+  });
+
+  it("skips stalls when total is 0", () => {
+    const problems = buildProblems({
+      hot: null,
+      hotAvailable: true,
+      gcEvents: [],
+      stalls: {
+        available: true,
+        thresholdMs: 250,
+        total: 0,
+        maxDurationMs: 0,
+        stalls: [],
+      },
+    });
+    expect(problems.some((p) => p.kind === "ui_stall")).toBe(false);
+  });
+
   it("ranks high severity before medium", () => {
     const problems = buildProblems({
       hot: hotPayload([widget({ name: "Card", ratePerSec: 9, share: 22 })]),

@@ -34,6 +34,8 @@ function magnitude(p: PerformanceProblem, ctx: ImpactContext): number {
       return clamp01((p.ratePerSec ?? 0) / 10);
     case "scenario_jank":
       return clamp01(ctx.jankRatio);
+    case "ui_stall":
+      return clamp01((p.relatedBuildMs ?? 0) / 2000);
     case "gc_pressure":
       return 0.6;
     case "missing_probe":
@@ -49,8 +51,13 @@ function magnitude(p: PerformanceProblem, ctx: ImpactContext): number {
 }
 
 function jankBoost(p: PerformanceProblem, ctx: ImpactContext): number {
-  if (p.kind === "hot_rebuild" || p.kind === "cpu_hotspot" || p.kind === "scenario_jank") {
-    if (p.duringJank) return 1;
+  if (
+    p.kind === "hot_rebuild" ||
+    p.kind === "cpu_hotspot" ||
+    p.kind === "scenario_jank" ||
+    p.kind === "ui_stall"
+  ) {
+    if (p.duringJank || p.kind === "ui_stall") return 1;
     return clamp01(ctx.jankRatio);
   }
   return 0;

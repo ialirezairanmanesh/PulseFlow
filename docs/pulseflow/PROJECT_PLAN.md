@@ -35,11 +35,11 @@ Ship app-side signals first; bridge/dashboard consume them over the wire.
 
 | # | Item | Layer | Status |
 |---|------|-------|--------|
-| A | `ext.pulseflow.getDeviceContext` — platform, display, locale, text scale, optional enricher | package + bridge | **doing** |
+| A | `ext.pulseflow.getDeviceContext` — platform, display, locale, text scale, optional enricher | package + bridge | **done** (wire) |
 | B | Custom scenario registry (`registerPulseFlowScenario`) + list/run | package | **doing** |
-| C | UI stall probe (`ext.pulseflow.getStallReport`) — main-isolate freeze > threshold | package + bridge | **doing** |
+| C | UI stall probe (`ext.pulseflow.getStallReport`) — main-isolate freeze > threshold | package + bridge | **done** (wire) |
 | D | Real `networkBurst` default + URI query redact for secrets | package | **doing** |
-| E | Dashboard `/device` page + Problems stall cards | dashboard | later |
+| E | Dashboard `/device` page + Problems stall cards | dashboard | **done** |
 | F | Platform-channel timing probe | package | later |
 | G | Shader / cold-start markers as first-class RPC | package | later |
 
@@ -60,8 +60,8 @@ Ship app-side signals first; bridge/dashboard consume them over the wire.
    - Add `/logs` route + bridge `connect` for the VM Service `Logging` / `Extension` stream.
    - Shows runtime logs, assertion messages, framework text, filter by level.
 
-4. **Device context panel** (depends on package item A)
-   - New `/device` route + AI-context block consuming `deviceContext` wire messages.
+4. **Device context panel** (depends on package item A) — **done**
+   - `/device` route + Problems/Frames stall surfacing + AI-context device/stalls blocks.
    - Optional app enricher can attach battery / connectivity / version without forcing
      plugin deps into `pulseflow_flutter`.
 

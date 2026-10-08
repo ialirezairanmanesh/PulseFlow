@@ -34,6 +34,7 @@ export function ReportPanel() {
     images,
     buildInfo,
     baselines,
+    stalls,
   } = usePulse();
 
   const problems = buildProblems({
@@ -47,6 +48,7 @@ export function ReportPanel() {
     points,
     scenarioResult,
     scenarioRunning,
+    stalls,
   });
 
   const before = baselines.find((b) => b.label === "before");

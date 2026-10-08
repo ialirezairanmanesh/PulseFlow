@@ -132,7 +132,8 @@ export type ProblemKind =
   | "memory_growth"
   | "slow_http"
   | "error_overflow"
-  | "error_exception";
+  | "error_exception"
+  | "ui_stall";
 
 export interface PerformanceProblem {
   id: string;
