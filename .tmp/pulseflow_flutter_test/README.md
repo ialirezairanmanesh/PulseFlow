@@ -75,8 +75,8 @@ make run
 # or: ./run.sh
 ```
 
-- Dashboard: [http://127.0.0.1:3846](http://127.0.0.1:3846)
-- Bridge: [http://127.0.0.1:3847](http://127.0.0.1:3847)
+- Dashboard: `http://127.0.0.1:3846`
+- Bridge: `http://127.0.0.1:3847`
 
 Requires **Node 18+** (22 recommended) and a Dart SDK for the bridge.
 

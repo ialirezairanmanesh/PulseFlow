@@ -30,7 +30,11 @@ export function mirrorStreamUrl(serial: string): string {
   const hash = new URLSearchParams({
     action: "stream",
     udid: serial,
-    player: "mse",
+    // webcodecs is lower-latency than mse/broadway on Chromium; falls back
+    // poorly only if the browser lacks VideoDecoder (rare for local Chrome).
+    player: "webcodecs",
+    // Scale the mirror to the iframe (ws-scrcpy defaults to a 480×480 box).
+    fitToScreen: "true",
     ws: proxy.toString(),
   });
   return `${mirrorBaseUrl()}/#!${hash.toString()}`;

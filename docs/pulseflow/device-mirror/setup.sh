@@ -35,6 +35,21 @@ git -C "$REPO" checkout -q android14
 
 cp -f "$ROOT/build.config.override.json" "$REPO/build.config.override.json"
 
+# PulseFlow patches (fit-to-screen deep-link for the dashboard iframe).
+PATCH_DIR="$ROOT/patches"
+PATCH_HASH=""
+if [[ -d "$PATCH_DIR" ]]; then
+  # Reset to clean PR tip so patches apply idempotently across re-runs.
+  git -C "$REPO" reset --hard -q android14
+  shopt -s nullglob
+  for patch in "$PATCH_DIR"/*.patch; do
+    echo "device-mirror: applying $(basename "$patch")"
+    git -C "$REPO" apply --whitespace=nowarn "$patch"
+  done
+  shopt -u nullglob
+  PATCH_HASH="$(cat "$PATCH_DIR"/*.patch 2>/dev/null | sha256sum | awk '{print $1}')"
+fi
+
 if [[ ! -d "$REPO/node_modules" ]]; then
   echo "device-mirror: npm install (this may take a few minutes)…"
   (cd "$REPO" && npm install --legacy-peer-deps)
@@ -42,10 +57,11 @@ fi
 
 HEAD="$(git -C "$REPO" rev-parse HEAD)"
 STAMP="$REPO/.pulseflow-build-rev"
-if [[ ! -f "$REPO/dist/index.js" ]] || [[ "$(cat "$STAMP" 2>/dev/null || true)" != "$HEAD" ]]; then
+BUILD_KEY="${HEAD}:${PATCH_HASH}"
+if [[ ! -f "$REPO/dist/index.js" ]] || [[ "$(cat "$STAMP" 2>/dev/null || true)" != "$BUILD_KEY" ]]; then
   echo "device-mirror: building ws-scrcpy…"
   (cd "$REPO" && npm run dist)
-  echo "$HEAD" > "$STAMP"
+  echo "$BUILD_KEY" > "$STAMP"
 fi
 
 if [[ ! -d "$REPO/dist/node_modules" ]]; then

@@ -1,0 +1,36 @@
+--- a/src/app/googDevice/client/StreamClientScrcpy.ts
++++ b/src/app/googDevice/client/StreamClientScrcpy.ts
+@@ -141,8 +141,9 @@ export class StreamClientScrcpy
+             this.streamReceiver = new StreamReceiverScrcpy(this.params);
+         }
+ 
+-        const { udid, player: playerName } = this.params;
+-        this.startStream({ udid, player, playerName, fitToScreen, videoSettings });
++        const { udid, player: playerName, fitToScreen: fitFromParams } = this.params;
++        // Prefer explicit start() arg, then deep-link hash (PulseFlow iframe).
++        this.startStream({ udid, player, playerName, fitToScreen: fitToScreen ?? fitFromParams, videoSettings });
+         this.setBodyClass('stream');
+     }
+ 
+@@ -158,6 +159,7 @@ export class StreamClientScrcpy
+             action,
+             player: Util.parseString(params, 'player', true),
+             udid: Util.parseString(params, 'udid', true),
+             ws: Util.parseString(params, 'ws', true),
++            fitToScreen: params.has('fitToScreen') ? Util.parseBoolean(params, 'fitToScreen') : undefined,
+         };
+     }
+ 
+--- a/src/app/player/WebCodecsPlayer.ts
++++ b/src/app/player/WebCodecsPlayer.ts
+@@ -198,8 +198,9 @@ export class WebCodecsPlayer extends BaseCanvasBasedPlayer {
+         frame.close();
+     }
+ 
+     public getFitToScreenStatus(): boolean {
+-        return false;
++        // Honor stored / URL-driven fit (upstream always returned false).
++        return WebCodecsPlayer.getFitToScreenStatus(this.udid, this.displayInfo);
+     }
+ 
+     public getPreferredVideoSetting(): VideoSettings {

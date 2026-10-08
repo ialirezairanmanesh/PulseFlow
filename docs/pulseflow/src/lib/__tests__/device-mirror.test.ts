@@ -12,7 +12,8 @@ describe("device-mirror urls", () => {
     expect(url).toContain("#!");
     expect(url).toContain("action=stream");
     expect(url).toContain("udid=localhost");
-    expect(url).toContain("player=mse");
+    expect(url).toContain("player=webcodecs");
+    expect(url).toContain("fitToScreen=true");
     expect(url).toContain("proxy-adb");
     expect(url).toContain("remote%3Dtcp");
     const hash = url.split("#!")[1] ?? "";

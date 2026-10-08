@@ -4,15 +4,20 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import {
   MonitorSmartphone,
   PanelLeftClose,
+  RectangleHorizontal,
+  RectangleVertical,
   RefreshCw,
   Smartphone,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { mirrorHealthUrl, mirrorStreamUrl } from "@/lib/device-mirror";
+import { mirrorStreamUrl } from "@/lib/device-mirror";
 import { usePulse } from "@/lib/pulse-store";
 import { cn } from "@/lib/utils";
 
 type MirrorStatus = "checking" | "online" | "offline";
+type PaneLayout = "landscape" | "portrait";
+
+const LAYOUT_KEY = "pulseflow.devicePaneLayout";
 
 export function DevicePane({
   collapsed,
@@ -27,16 +32,38 @@ export function DevicePane({
   const [mirrorStatus, setMirrorStatus] = useState<MirrorStatus>("checking");
   const [streamKey, setStreamKey] = useState(0);
   const [streaming, setStreaming] = useState(true);
+  const [layout, setLayout] = useState<PaneLayout>("landscape");
 
-  const checkMirror = useCallback(async () => {
-    setMirrorStatus("checking");
+  useEffect(() => {
     try {
-      const res = await fetch(mirrorHealthUrl(), {
+      const saved = localStorage.getItem(LAYOUT_KEY);
+      if (saved === "portrait" || saved === "landscape") setLayout(saved);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const setLayoutPersist = useCallback((next: PaneLayout) => {
+    setLayout(next);
+    try {
+      localStorage.setItem(LAYOUT_KEY, next);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  // Background polls must NOT flip status to "checking" — that unmounts the
+  // iframe (canStream requires "online") and reloads the stream every interval.
+  const checkMirror = useCallback(async ({ quiet = false }: { quiet?: boolean } = {}) => {
+    if (!quiet) setMirrorStatus("checking");
+    try {
+      // Same-origin API — direct fetch to :3848 is cross-origin and blocked
+      // because ws-scrcpy does not send Access-Control-Allow-Origin.
+      const res = await fetch("/api/mirror-health", {
         method: "GET",
         cache: "no-store",
-        signal: AbortSignal.timeout(1500),
+        signal: AbortSignal.timeout(2500),
       });
-      // ws-scrcpy serves 200 on /; offline stub serves 503.
       setMirrorStatus(res.ok ? "online" : "offline");
     } catch {
       setMirrorStatus("offline");
@@ -45,7 +72,7 @@ export function DevicePane({
 
   useEffect(() => {
     void checkMirror();
-    const id = setInterval(() => void checkMirror(), 8000);
+    const id = setInterval(() => void checkMirror({ quiet: true }), 8000);
     return () => clearInterval(id);
   }, [checkMirror]);
 
@@ -77,6 +104,26 @@ export function DevicePane({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-1">
+          <Button
+            size="sm"
+            variant="ghost"
+            title="Landscape frame"
+            aria-pressed={layout === "landscape"}
+            onClick={() => setLayoutPersist("landscape")}
+            className={layout === "landscape" ? "text-[var(--accent)]" : undefined}
+          >
+            <RectangleHorizontal className="h-3.5 w-3.5" />
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            title="Portrait frame"
+            aria-pressed={layout === "portrait"}
+            onClick={() => setLayoutPersist("portrait")}
+            className={layout === "portrait" ? "text-[var(--accent)]" : undefined}
+          >
+            <RectangleVertical className="h-3.5 w-3.5" />
+          </Button>
           <Button
             size="sm"
             variant="ghost"
@@ -143,12 +190,19 @@ export function DevicePane({
           />
         ) : canStream ? (
           <div className="relative flex min-h-0 flex-1 flex-col">
-            <div className="mx-auto flex min-h-0 w-full max-w-[360px] flex-1 flex-col rounded-[1.5rem] border border-white/15 bg-black p-2 shadow-[0_0_40px_rgba(0,0,0,0.45)]">
+            <div
+              className={cn(
+                "relative mx-auto w-full min-h-0 overflow-hidden rounded-xl border border-white/15 bg-black shadow-[0_0_40px_rgba(0,0,0,0.45)]",
+                layout === "landscape"
+                  ? "aspect-video max-h-full flex-1"
+                  : "max-w-[420px] flex-1",
+              )}
+            >
               <iframe
-                key={streamKey}
+                key={`${streamKey}-${layout}`}
                 title={`Android device ${deviceSerial}`}
                 src={mirrorStreamUrl(deviceSerial)}
-                className="h-full min-h-[420px] w-full flex-1 rounded-[1.1rem] bg-black"
+                className="absolute inset-0 h-full w-full rounded-lg border-0 bg-black"
                 allow="autoplay; clipboard-read; clipboard-write"
               />
             </div>

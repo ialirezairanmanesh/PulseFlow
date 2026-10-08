@@ -27,6 +27,12 @@ declare -A ADB_PORTS=(
   ["release"]=5575
 )
 
+# Display: default redroid is ~15fps which makes the mirror look like a slideshow.
+# Override with REDROID_FPS / REDROID_WIDTH / REDROID_HEIGHT if needed.
+REDROID_FPS="${REDROID_FPS:-30}"
+REDROID_WIDTH="${REDROID_WIDTH:-1280}"
+REDROID_HEIGHT="${REDROID_HEIGHT:-720}"
+
 container_name() {
   echo "redroid-$1"
 }
@@ -44,13 +50,16 @@ start() {
   else
     echo "  [$cname] pulling redroid:${version}..."
     docker pull "redroid/redroid:${version}"
-    echo "  [$cname] starting on ADB port $port..."
+    echo "  [$cname] starting on ADB port $port (${REDROID_WIDTH}x${REDROID_HEIGHT}@${REDROID_FPS})..."
     docker run -d \
       --name "$cname" \
       --privileged \
       --rm \
       -p "${port}:5555" \
-      "redroid/redroid:${version}"
+      "redroid/redroid:${version}" \
+      androidboot.redroid_width="${REDROID_WIDTH}" \
+      androidboot.redroid_height="${REDROID_HEIGHT}" \
+      androidboot.redroid_fps="${REDROID_FPS}"
   fi
 
   echo "  [$cname] waiting for boot (up to 60s)..."

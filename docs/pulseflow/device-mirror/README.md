@@ -44,3 +44,9 @@ Or alone:
 | `PULSEFLOW_MIRROR_PORT` | `3848` | HTTP port for ws-scrcpy |
 | `NEXT_PUBLIC_MIRROR_PORT` | `3848` | Port the Next.js UI probes / embeds |
 | `NEXT_PUBLIC_MIRROR_HOST` | `127.0.0.1` | Host for the iframe |
+
+## Fit-to-screen (dashboard iframe)
+
+The left pane deep-links with `fitToScreen=true` so the mirror fills the iframe
+instead of the default WebCodecs `480×480` box. Patches under `patches/` are
+applied by `setup.sh` on every build.

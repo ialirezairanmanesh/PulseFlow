@@ -1,3 +1,7 @@
+## 0.2.1
+
+- README: drop insecure `http://` markdown links so pub points stay at 160.
+
 ## 0.2.0
 
 - **Device context:** `ext.pulseflow.getDeviceContext` reports platform, build
