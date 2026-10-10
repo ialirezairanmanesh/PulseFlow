@@ -237,7 +237,6 @@ Do not reuse built-in ids (`scrollStorm`, `routeThrash`, …).
 
 ### Stress RPCs (from the dashboard)
 
-- `injectInvoices` — append demo invoices (`count`)
 - `spikeCpu` — busy-loop (`millis`)
 - `allocateMemory` — retain buffers (`megabytes`)
 
@@ -261,7 +260,7 @@ All names are under `ext.pulseflow.*`. The dashboard / bridge call these for you
 | `getLeakReport` | Outstanding objects by class |
 | `getErrors` | Overflow / assertion / exception signatures |
 | `getImageStats` | Image cache + oversized decodes |
-| `injectInvoices` / `spikeCpu` / `allocateMemory` | Stress |
+| `spikeCpu` / `allocateMemory` | Stress |
 | `listScenarios` / `runScenario` / `stopScenario` | Built-in + custom lab scenarios |
 
 ---

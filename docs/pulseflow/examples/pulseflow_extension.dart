@@ -22,6 +22,7 @@ class PulseFlowStressState {
   PulseFlowStressState._();
   static final instance = PulseFlowStressState._();
 
+  /// App-supplied list items appended by the `listFlood` scenario.
   final List<Map<String, dynamic>> invoices = [];
   final List<List<int>> retainedBuffers = [];
 
@@ -763,19 +764,6 @@ class _PulseTickerProvider implements TickerProvider {
 }
 
 void registerPulseFlowExtensions() {
-  registerExtension('ext.pulseflow.injectInvoices', (method, params) async {
-    final count = int.tryParse(params['count']?.toString() ?? '') ?? 100;
-    final rng = Random();
-    for (var i = 0; i < count; i++) {
-      PulseFlowStressState.instance.invoices.add({
-        'id': 'INV-${DateTime.now().microsecondsSinceEpoch}-$i',
-        'total': rng.nextDouble() * 500,
-        'lines': List.generate(8, (j) => 'Item $j'),
-      });
-    }
-    return ServiceExtensionResponse.result('{"ok":true,"injected":$count}');
-  });
-
   registerExtension('ext.pulseflow.spikeCpu', (method, params) async {
     final millis = int.tryParse(params['millis']?.toString() ?? '') ?? 800;
     final sw = Stopwatch()..start();

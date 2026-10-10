@@ -559,7 +559,6 @@ function startMock(session: Session) {
     info: {
       available: true,
       methods: [
-        "ext.pulseflow.injectInvoices",
         "ext.pulseflow.spikeCpu",
         "ext.pulseflow.allocateMemory",
         "ext.pulseflow.getHotWidgets",
@@ -2523,22 +2522,6 @@ async function runStress(session: Session, action: string, params?: Record<strin
           externalMb: 12 + Math.random() * 2,
         },
       });
-      if (action.includes("invoice") || action === "injectInvoices") {
-        send(session.client, {
-          type: "network",
-          available: true,
-          request: {
-            id: randomUUID(),
-            t,
-            method: "POST",
-            uri: "/api/invoices/bulk",
-            latencyMs: Number((180 + Math.random() * 220).toFixed(1)),
-            requestBytes: 12000 + bursts * 800,
-            responseBytes: 2400,
-            status: 201,
-          },
-        });
-      }
       if (bursts >= 8) clearInterval(spike);
     }, 200);
     send(session.client, {
@@ -2559,7 +2542,6 @@ async function runStress(session: Session, action: string, params?: Record<strin
   }
 
   const methodMap: Record<string, string> = {
-    injectInvoices: "ext.pulseflow.injectInvoices",
     spikeCpu: "ext.pulseflow.spikeCpu",
     allocateMemory: "ext.pulseflow.allocateMemory",
   };
@@ -2686,7 +2668,6 @@ function attachClient(client: WebSocket) {
                 info: {
                   available: true,
                   methods: [
-                    "ext.pulseflow.injectInvoices",
                     "ext.pulseflow.spikeCpu",
                     "ext.pulseflow.allocateMemory",
                     "ext.pulseflow.listScenarios",

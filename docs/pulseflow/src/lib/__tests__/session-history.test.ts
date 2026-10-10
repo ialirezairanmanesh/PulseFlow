@@ -1,8 +1,30 @@
 import { describe, expect, it } from "vitest";
+import type { PerformanceProblem } from "@/lib/types";
 import type { SavedSession, SessionStats } from "@/lib/session-history";
-import { compareSessions, formatDelta, pctChange, summarizeComparison } from "@/lib/session-history";
+import {
+  compareSessions,
+  diffProblems,
+  formatDelta,
+  orderChronologically,
+  pctChange,
+  summarizeComparison,
+  summarizeProblemDiff,
+} from "@/lib/session-history";
 
-function session(id: string, stats: Partial<SessionStats>): SavedSession {
+function problem(id: string, impact: number, extra: Partial<PerformanceProblem> = {}): PerformanceProblem {
+  return {
+    id,
+    severity: impact >= 50 ? "high" : impact >= 25 ? "medium" : "low",
+    kind: "hot_rebuild",
+    title: `Problem ${id}`,
+    detail: "detail",
+    action: "action",
+    impact,
+    ...extra,
+  };
+}
+
+function session(id: string, stats: Partial<SessionStats>, problems?: PerformanceProblem[]): SavedSession {
   return {
     id,
     savedAt: 0,
@@ -16,6 +38,7 @@ function session(id: string, stats: Partial<SessionStats>): SavedSession {
       jankRatio: 0,
       ...stats,
     },
+    problems,
     report: null,
   };
 }
@@ -90,5 +113,87 @@ describe("summarizeComparison", () => {
     const after = session("b", { p95BuildMs: 8, heapMb: 55 });
     const summary = summarizeComparison(compareSessions(before, after));
     expect(summary.headline).toMatch(/Mixed/);
+  });
+});
+
+describe("orderChronologically", () => {
+  it("puts the older session first regardless of argument order", () => {
+    const older = { ...session("old", {}), savedAt: 100 };
+    const newer = { ...session("new", {}), savedAt: 200 };
+    expect(orderChronologically(newer, older).map((s) => s.id)).toEqual(["old", "new"]);
+    expect(orderChronologically(older, newer).map((s) => s.id)).toEqual(["old", "new"]);
+  });
+});
+
+describe("diffProblems", () => {
+  it("classifies fixed, new, and persisting problems by id", () => {
+    const before = session("b", {}, [
+      problem("a", 60),
+      problem("b", 40),
+      problem("c", 20),
+    ]);
+    const after = session("a", {}, [problem("b", 30), problem("c", 20), problem("d", 90)]);
+
+    const diff = diffProblems(before, after);
+    expect(diff.fixed.map((p) => p.id)).toEqual(["a"]);
+    expect(diff.added.map((p) => p.id)).toEqual(["d"]);
+    expect(diff.persisting.map((p) => p.id)).toEqual(["b", "c"]);
+  });
+
+  it("computes the impact delta for persisting problems", () => {
+    const before = session("b", {}, [problem("a", 100)]);
+    const after = session("a", {}, [problem("a", 25)]);
+    const diff = diffProblems(before, after);
+    expect(diff.persisting[0].impactDelta).toBe(-75);
+  });
+
+  it("sorts fixed and added groups by impact descending", () => {
+    const before = session("b", {}, [problem("low", 10), problem("high", 90)]);
+    const after = session("a", {}, [problem("mid", 50), problem("top", 99)]);
+    const diff = diffProblems(before, after);
+    expect(diff.fixed.map((p) => p.id)).toEqual(["high", "low"]);
+    expect(diff.added.map((p) => p.id)).toEqual(["top", "mid"]);
+  });
+
+  it("treats missing problem lists as empty", () => {
+    const diff = diffProblems(session("b", {}), session("a", {}));
+    expect(diff).toEqual({ fixed: [], added: [], persisting: [] });
+  });
+});
+
+describe("summarizeProblemDiff", () => {
+  it("celebrates a clean fix", () => {
+    const diff = diffProblems(session("b", {}, [problem("a", 50)]), session("a", {}, []));
+    const summary = summarizeProblemDiff(diff);
+    expect(summary.tone).toBe("good");
+    expect(summary.headline).toMatch(/Fixed 1/);
+  });
+
+  it("flags a regression when only new problems appear", () => {
+    const diff = diffProblems(session("b", {}, []), session("a", {}, [problem("a", 50)]));
+    const summary = summarizeProblemDiff(diff);
+    expect(summary.tone).toBe("bad");
+    expect(summary.headline).toMatch(/Regression/);
+  });
+
+  it("notes a mixed fix", () => {
+    const diff = diffProblems(
+      session("b", {}, [problem("a", 50)]),
+      session("a", {}, [problem("z", 50)]),
+    );
+    expect(summarizeProblemDiff(diff).headline).toMatch(/Mixed/);
+  });
+
+  it("summarizes only-persisting sessions", () => {
+    const diff = diffProblems(session("b", {}, [problem("a", 50)]), session("a", {}, [problem("a", 20)]));
+    const summary = summarizeProblemDiff(diff);
+    expect(summary.tone).toBe("neutral");
+    expect(summary.headline).toMatch(/cheaper/);
+  });
+
+  it("summarizes only-persisting sessions with unchanged impact", () => {
+    const diff = diffProblems(session("b", {}, [problem("a", 50)]), session("a", {}, [problem("a", 50)]));
+    const summary = summarizeProblemDiff(diff);
+    expect(summary.headline).toMatch(/still open/);
   });
 });

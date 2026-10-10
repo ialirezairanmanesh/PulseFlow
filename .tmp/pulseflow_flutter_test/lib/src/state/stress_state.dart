@@ -5,7 +5,7 @@ class PulseFlowStressState {
 
   static final PulseFlowStressState instance = PulseFlowStressState._();
 
-  /// App-supplied invoices appended by `injectInvoices` / `listFlood`.
+  /// App-supplied list items appended by the `listFlood` scenario.
   final List<Map<String, dynamic>> invoices = <Map<String, dynamic>>[];
 
   /// Byte buffers retained by `allocateMemory` / `retainMemory`.

@@ -46,6 +46,7 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copiedTurn, setCopiedTurn] = useState<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -194,7 +195,20 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
+      setCopiedTurn(null);
       setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // clipboard blocked — ignore
+    }
+  };
+
+  const copyTurn = async (index: number, content: string) => {
+    if (!content.trim()) return;
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopiedTurn(index);
+      setCopied(false);
+      setTimeout(() => setCopiedTurn((prev) => (prev === index ? null : prev)), 1500);
     } catch {
       // clipboard blocked — ignore
     }
@@ -276,10 +290,24 @@ export function AiDrawer({ open, onClose }: { open: boolean; onClose: () => void
                 turn.role === "assistant" ? (
                   <div
                     key={index}
-                    dir="auto"
-                    className="whitespace-pre-wrap break-words rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm leading-relaxed text-[var(--ink)]"
+                    className="relative rounded-lg border border-white/10 bg-black/30 px-3 py-2"
                   >
-                    {turn.content || (streaming && index === turns.length - 1 ? "…" : "")}
+                    <button
+                      type="button"
+                      aria-label="Copy AI reply"
+                      disabled={!turn.content.trim()}
+                      onClick={() => void copyTurn(index, turn.content)}
+                      className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-md border border-white/10 bg-black/50 px-1.5 py-1 text-[10px] text-[var(--ink-muted)] transition-colors hover:bg-white/10 hover:text-[var(--ink)] disabled:cursor-not-allowed disabled:opacity-30"
+                    >
+                      <Copy className="h-3 w-3" />
+                      {copiedTurn === index ? "Copied" : "Copy"}
+                    </button>
+                    <div
+                      dir="auto"
+                      className="whitespace-pre-wrap break-words pe-14 text-sm leading-relaxed text-[var(--ink)]"
+                    >
+                      {turn.content || (streaming && index === turns.length - 1 ? "…" : "")}
+                    </div>
                   </div>
                 ) : (
                   <div

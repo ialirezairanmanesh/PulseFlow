@@ -203,21 +203,6 @@ void _registerExtensions() {
   });
 
   // --- Stress actions ---
-  registerPulseExtension('ext.pulseflow.injectInvoices', (
-    Map<String, String> params,
-  ) {
-    final int count = intParam(params, 'count', 100);
-    final Random rng = Random();
-    for (var i = 0; i < count; i++) {
-      PulseFlowStressState.instance.invoices.add(<String, dynamic>{
-        'id': 'INV-${DateTime.now().microsecondsSinceEpoch}-$i',
-        'total': rng.nextDouble() * 500,
-        'lines': List<String>.generate(8, (int j) => 'Item $j'),
-      });
-    }
-    return <String, Object?>{'ok': true, 'injected': count};
-  });
-
   registerPulseExtension('ext.pulseflow.spikeCpu', (
     Map<String, String> params,
   ) {

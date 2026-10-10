@@ -306,3 +306,26 @@ describe("buildChatMessages", () => {
     expect(messages[2].content).toBe("answer");
   });
 });
+
+describe("execution-ready fixes", () => {
+  it("demands a concrete target + named API + snippet in the system prompt", () => {
+    const system = buildChatMessages("problems", "DATA", undefined, "en")[0].content;
+    expect(system).toMatch(/execution-ready/i);
+    expect(system).toMatch(/before→after snippet/);
+    expect(system).toMatch(/No vague advice/);
+    expect(system).toMatch(/\*\*Target\*\*/);
+    expect(system).toMatch(/\*\*Change\*\*/);
+  });
+
+  it("appends an actionability clause to the default user question", () => {
+    const user = buildChatMessages("problems", "DATA", undefined, "en")[1].content;
+    expect(user).toMatch(/name the exact widget\/class and the Flutter\/Dart API/);
+    expect(user).toMatch(/before→after snippet/);
+  });
+
+  it("still honours the language directive alongside the new rules", () => {
+    const fa = buildChatMessages("problems", "DATA", undefined, "fa")[0].content;
+    expect(fa).toContain("فارسی");
+    expect(fa).toMatch(/execution-ready/i);
+  });
+});

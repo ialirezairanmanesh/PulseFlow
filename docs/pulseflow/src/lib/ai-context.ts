@@ -125,7 +125,7 @@ export const QUICK_PROMPTS = {
   explain:
     "Write a concise review: short summary, up to 5 findings with app widget + route, up to 3 ranked fixes, and what to re-measure. Separate frame-budget issues from network latency.",
   topFixes:
-    "Give the top 3 fixes by impact. Name each app widget and its route/screen, with concrete Flutter steps. Do not invent libraries.",
+    "Give the top 3 fixes by impact. For each: name the app widget and route/screen, the exact Flutter/Dart change (named APIs + a short before→after snippet), and the metric to re-measure. Do not invent libraries or file paths.",
   regression:
     "Is anything regressing? Name the widgets/routes to watch and what metric should improve after a fix.",
 } as const;
@@ -811,12 +811,14 @@ export function systemPrompt(section: AiSection, language: AiLanguage): string {
     "- Do not multiply relatedBuild / session build cost across widgets; that cost is frame-wide when present.",
     "- Do not blame SvgPicture/GC for frame jank unless image/memory metrics in the brief support it.",
     "- Cap ## Findings at 5 bullets and ## Fixes at 3. Rank by measured impact. Do not invent Hive/dio interceptors/etc. unless the brief already mentions them.",
+    "- Make every fix execution-ready: name the exact widget/class it changes and the specific Flutter/Dart API or pattern to add/change/remove (e.g. `ListView.builder` + `itemExtent`, `RepaintBoundary`, a `const` constructor, `Image(cacheWidth:)`, `AutomaticKeepAliveClientMixin`). No vague advice like “optimize”, “cache”, or “virtualize” without saying what and where.",
+    "- When a widget or `file:line` is present, include a short copy-pasteable before→after snippet; when it is missing, say which file/screen to open instead of guessing.",
     ...SECTION_SCOPE_RULES[section],
     "When citing UI issues, name them as `WidgetName` on `/route` and include `file:line` when present.",
     "Structure every answer with these Markdown headings, in order:",
     SECTION_SUMMARY_RULE[section],
     SECTION_FINDINGS_RULE[section],
-    "3. ## Fixes — up to 3, ranked by impact, with concrete changes grounded in the data",
+    "3. ## Fixes — up to 3, ranked by impact. For each write **Target** (`WidgetName` on `/route`, `file:line` when present), **Change** (the exact Flutter/Dart edit naming the APIs, plus a short before→after snippet), and **Verify** (the metric to re-measure)",
     "4. ## Verify — what to re-measure in PulseFlow after the fix (prefer this same tab)",
     "Close with one clear next step. Keep tone professional and actionable; avoid fluff.",
     `Focus on ${SECTION_HINTS[section]}.`,
@@ -841,7 +843,7 @@ export function buildChatMessages(
   const ask = question?.trim() || SECTION_DEFAULT_QUESTION[section];
   messages.push({
     role: "user",
-    content: `Current PulseFlow “${SECTION_TITLES[section]}” data:\n\n${context}\n\n---\n${ask}`,
+    content: `Current PulseFlow “${SECTION_TITLES[section]}” data:\n\n${context}\n\n---\n${ask}\n\nFor each fix, name the exact widget/class and the Flutter/Dart API to change, and include a short before→after snippet (say which file/screen to open if the location is unknown).`,
   });
   return messages;
 }

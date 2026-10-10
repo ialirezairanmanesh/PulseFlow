@@ -2021,7 +2021,6 @@ class BridgeSession {
       return;
     }
     final Map<String, String> methodMap = <String, String>{
-      'injectInvoices': 'ext.pulseflow.injectInvoices',
       'spikeCpu': 'ext.pulseflow.spikeCpu',
       'allocateMemory': 'ext.pulseflow.allocateMemory',
     };
@@ -2164,7 +2163,6 @@ class BridgeSession {
       'info': {
         'available': true,
         'methods': <String>[
-          'ext.pulseflow.injectInvoices',
           'ext.pulseflow.spikeCpu',
           'ext.pulseflow.allocateMemory',
           'ext.pulseflow.getHotWidgets',
@@ -2560,22 +2558,6 @@ class BridgeSession {
           'externalMb': round2(12 + _rng.nextDouble() * 2),
         },
       });
-      if (action.contains('invoice') || action == 'injectInvoices') {
-        _send(<String, Object?>{
-          'type': 'network',
-          'available': true,
-          'request': {
-            'id': _uuid(),
-            't': t,
-            'method': 'POST',
-            'uri': '/api/invoices/bulk',
-            'latencyMs': double.parse((180 + _rng.nextDouble() * 220).toStringAsFixed(1)),
-            'requestBytes': 12000 + bursts * 800,
-            'responseBytes': 2400,
-            'status': 201,
-          },
-        });
-      }
       if (bursts >= 8) timer.cancel();
     });
     _send(<String, Object?>{'type': 'status', 'status': 'connected', 'mode': 'mock', 'message': 'Mock stress "$action" fired'});

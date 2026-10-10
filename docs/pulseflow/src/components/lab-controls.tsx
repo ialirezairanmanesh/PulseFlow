@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { ExtensionInfo, ScenarioInfo, SessionBaseline } from "@/lib/types";
-import { Cpu, MemoryStick, PackagePlus, Play, Square, Zap } from "lucide-react";
+import { Cpu, MemoryStick, Play, Square, Zap } from "lucide-react";
 
 export function LabControls({
   extension,
@@ -38,7 +38,6 @@ export function LabControls({
 }) {
   const available = extension?.available ?? false;
   const [scenarioId, setScenarioId] = useState<string>("");
-  const [invoiceCount, setInvoiceCount] = useState(100);
   const [cpuMillis, setCpuMillis] = useState(800);
   const [megabytes, setMegabytes] = useState(32);
 
@@ -73,16 +72,7 @@ export function LabControls({
           </p>
         )}
 
-        <div className="mb-3 grid gap-2 sm:grid-cols-3">
-          <label className="text-xs text-[var(--ink-faint)]">
-            Invoice count
-            <Input
-              type="number"
-              className="mt-1"
-              value={invoiceCount}
-              onChange={(e) => setInvoiceCount(Number(e.target.value) || 0)}
-            />
-          </label>
+        <div className="mb-3 grid gap-2 sm:grid-cols-2">
           <label className="text-xs text-[var(--ink-faint)]">
             CPU spike ms
             <Input
@@ -104,14 +94,6 @@ export function LabControls({
         </div>
 
         <div className="flex flex-wrap gap-2">
-          <Button
-            size="sm"
-            disabled={disabled || !available}
-            onClick={() => onStress("injectInvoices", { count: invoiceCount })}
-          >
-            <PackagePlus className="h-4 w-4" />
-            Inject invoices
-          </Button>
           <Button
             size="sm"
             variant="secondary"

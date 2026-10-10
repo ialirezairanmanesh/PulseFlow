@@ -3,7 +3,7 @@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import type { ExtensionInfo } from "@/lib/types";
-import { Zap, PackagePlus, Cpu, MemoryStick } from "lucide-react";
+import { Zap, Cpu, MemoryStick } from "lucide-react";
 
 export function StressControls({
   extension,
@@ -42,14 +42,6 @@ export function StressControls({
       )}
 
       <div className="flex flex-wrap gap-2">
-        <Button
-          size="sm"
-          disabled={disabled || !available}
-          onClick={() => onStress("injectInvoices", { count: 100 })}
-        >
-          <PackagePlus className="h-4 w-4" />
-          Inject 100 invoices
-        </Button>
         <Button
           size="sm"
           variant="secondary"

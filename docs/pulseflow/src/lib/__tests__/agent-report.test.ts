@@ -111,6 +111,44 @@ describe("buildAgentReportMarkdown", () => {
   });
 });
 
+describe("actionable agent prompt", () => {
+  it("asks for an execution-ready plan with target/evidence/change/verify", () => {
+    expect(AGENT_PROMPT).toMatch(/execution-ready fix plan/);
+    expect(AGENT_PROMPT).toMatch(/file:line/);
+    expect(AGENT_PROMPT).toMatch(/before→after snippet/);
+    expect(AGENT_PROMPT).toMatch(/Verify/);
+  });
+
+  it("embeds an explicit output-format contract in the report", () => {
+    const md = buildAgentReportMarkdown(input);
+    expect(md).toContain("## Output format (follow exactly)");
+    expect(md).toContain("**Target**");
+    expect(md).toContain("**Change**");
+  });
+
+  it("names the widget, route, and measured evidence for each problem", () => {
+    const md = buildAgentReportMarkdown({
+      ...input,
+      problems: [
+        {
+          ...problem,
+          widget: "InvoiceCard",
+          route: "/invoices",
+          ratePerSec: 22,
+          share: 40,
+          cause: "InvoiceListState",
+          impact: 78,
+        },
+      ],
+    });
+    expect(md).toContain("`InvoiceCard` on /invoices");
+    expect(md).toContain("22.0/s");
+    expect(md).toContain("40.0% share");
+    expect(md).toContain("cause: InvoiceListState");
+    expect(md).toContain("/abs/card.dart:42");
+  });
+});
+
 describe("buildAgentReportJson", () => {
   it("carries the structured payload with caps", () => {
     const json = buildAgentReportJson(input);

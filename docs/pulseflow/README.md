@@ -180,7 +180,6 @@ Hot-restart, reconnect PulseFlow. The bridge will:
 | `ext.pulseflow.getImageStats` | Image cache health + oversized decodes |
 | `ext.pulseflow.getNetworkLog` | Drain `HttpOverrides`-captured requests (URI secrets redacted) |
 | `ext.pulseflow.getLeakReport` | Outstanding (created-not-disposed) objects |
-| `ext.pulseflow.injectInvoices` | Stress: append invoices (`count`) |
 | `ext.pulseflow.spikeCpu` | Stress: busy-loop (`millis`) |
 | `ext.pulseflow.allocateMemory` | Stress: retain buffers (`megabytes`) |
 | `ext.pulseflow.startWidgetProbe` / `stopWidgetProbe` / `resetWidgetProbe` / `setWidgetProbeFrozen` / `getHotWidgets` | Rebuild probe (with `sourceUri`/`sourceLine`) |

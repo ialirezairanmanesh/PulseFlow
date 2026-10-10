@@ -16,6 +16,7 @@ export async function GET() {
       mode: s.mode,
       isolateName: s.isolateName,
       stats: s.stats,
+      problems: s.problems ?? [],
     })),
   });
 }
@@ -32,6 +33,7 @@ export async function POST(request: Request) {
     mode: body.mode,
     isolateName: body.isolateName,
     stats: body.stats,
+    problems: body.problems ?? [],
     report: body.report ?? null,
   };
   await saveSession(entry);

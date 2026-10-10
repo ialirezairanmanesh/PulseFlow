@@ -15,6 +15,7 @@ import { usePulse } from "@/lib/pulse-store";
 
 export function ReportPanel() {
   const [saveMessage, setSaveMessage] = useState<string>();
+  const [sessionLabel, setSessionLabel] = useState("");
   const {
     connected,
     mode,
@@ -136,14 +137,24 @@ export function ReportPanel() {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          label: new Date().toLocaleString(),
+          label: sessionLabel.trim() || new Date().toLocaleString(),
           mode,
           isolateName,
           stats,
+          problems,
           report,
         }),
       });
-      setSaveMessage(res.ok ? "Session saved to history" : "Could not save session");
+      if (res.ok) {
+        setSaveMessage(
+          sessionLabel.trim()
+            ? `Saved "${sessionLabel.trim()}" to history`
+            : "Session saved to history",
+        );
+        setSessionLabel("");
+      } else {
+        setSaveMessage("Could not save session");
+      }
     } catch {
       setSaveMessage("Could not save session");
     }
@@ -239,6 +250,17 @@ export function ReportPanel() {
         <h3 className="mb-2 font-[family-name:var(--font-display)] text-lg tracking-tight text-[var(--ink)]">
           Session snapshot
         </h3>
+        <p className="mb-3 text-sm text-[var(--ink-muted)]">
+          Name this capture so it is easy to pick as a before/after in History (e.g. “before —
+          unvirtualized list”, “after — ListView.builder”).
+        </p>
+        <input
+          type="text"
+          value={sessionLabel}
+          onChange={(e) => setSessionLabel(e.target.value)}
+          placeholder="Session label (optional)"
+          className="mb-3 w-full rounded-md border border-white/10 bg-black/30 px-3 py-2 text-sm text-[var(--ink)] placeholder:text-[var(--ink-faint)] focus:border-[var(--accent)] focus:outline-none"
+        />
         {saveMessage && (
           <p className="mb-2 text-sm text-[var(--ink-muted)]">{saveMessage}</p>
         )}

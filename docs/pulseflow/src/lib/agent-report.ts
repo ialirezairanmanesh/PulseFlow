@@ -41,10 +41,15 @@ export interface AgentReportInput {
 
 /** Instruction header the dashboard prepends so an agent knows what to do. */
 export const AGENT_PROMPT =
-  "You are a senior Flutter performance engineer. Review the PulseFlow session below and " +
-  "return: (1) the top 3 fixes ranked by impact, (2) concrete code changes naming widgets/" +
-  "state/APIs, and (3) what to re-measure to confirm the fix. Lower is better for all " +
-  "times, rates, and ratios.";
+  "You are a senior Flutter performance engineer. Using ONLY the PulseFlow data below, produce an " +
+  "execution-ready fix plan ranked by impact. For EACH fix give: (1) Target — the exact widget/class " +
+  "and `file:line` when present, plus its route/screen; (2) Evidence — the measured numbers that justify " +
+  "it (impact, /s, share %, ms, bytes); (3) Change — the specific Flutter/Dart edit naming the APIs to " +
+  "add/change/remove, with a short before→after snippet; (4) Verify — the exact PulseFlow metric/tab to " +
+  "re-measure. Cap at 3 fixes unless more are clearly independent. Never invent widgets, files, " +
+  "libraries, or numbers; if a source location is missing, say what to open instead of guessing. Keep " +
+  "frame-budget (build/raster/jank/rebuild) issues separate from network latency (ms) and memory " +
+  "(bytes). Lower is better for all times, rates, and ratios.";
 
 const MAX = {
   problems: 12,
@@ -151,6 +156,15 @@ export function buildAgentReportMarkdown(input: AgentReportInput): string {
     );
   }
   lines.push("");
+  lines.push("## Output format (follow exactly)", "");
+  lines.push("For each fix, in priority order:", "");
+  lines.push("1. **Target** — `WidgetName` on `/route` (and `file:line` when present)");
+  lines.push("2. **Evidence** — the measured numbers from below that justify it");
+  lines.push(
+    "3. **Change** — the exact Flutter/Dart edit naming the APIs, with a short before→after snippet",
+  );
+  lines.push("4. **Verify** — the PulseFlow tab/metric to re-measure");
+  lines.push("");
 
   const coverage = buildCoverageLines(input);
   if (coverage.length) {
@@ -165,16 +179,33 @@ export function buildAgentReportMarkdown(input: AgentReportInput): string {
   } else {
     data.problems.forEach((p, i) => {
       const impactLabel = p.impact != null ? ` (impact ${p.impact})` : "";
+      const widgetAt =
+        p.widget && p.route
+          ? ` — \`${p.widget}\` on ${p.route}`
+          : p.widget
+            ? ` — \`${p.widget}\``
+            : p.route
+              ? ` — route ${p.route}`
+              : "";
       lines.push(
-        `${i + 1}. **[${p.severity.toUpperCase()}] ${p.title}**${impactLabel} — ${p.detail}`,
+        `${i + 1}. **[${p.severity.toUpperCase()}] ${p.title}**${widgetAt}${impactLabel} — ${p.detail}`,
       );
       if (p.why) {
         lines.push(`   - Why: ${p.why}`);
       }
       lines.push(`   - Fix: ${p.action}`);
-      if (p.sourceUri) {
-        lines.push(`   - Source: ${p.sourceUri}${p.sourceLine ? `:${p.sourceLine}` : ""}`);
-      }
+      const evidence = [
+        p.sourceUri ? `${p.sourceUri}${p.sourceLine ? `:${p.sourceLine}` : ""}` : "",
+        p.cause ? `cause: ${p.cause}` : "",
+        p.ratePerSec != null && p.kind !== "slow_http" ? `${p.ratePerSec.toFixed(1)}/s` : "",
+        p.share != null ? `${p.share.toFixed(1)}% share` : "",
+        p.latencyMs != null ? `${p.latencyMs.toFixed(0)} ms latency` : "",
+        p.relatedBuildMs != null ? `relatedBuild ${p.relatedBuildMs.toFixed(1)} ms` : "",
+        p.duringJank ? "during jank" : "",
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      if (evidence) lines.push(`   - Evidence: ${evidence}`);
     });
     lines.push("");
   }

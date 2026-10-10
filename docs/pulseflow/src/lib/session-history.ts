@@ -1,3 +1,5 @@
+import type { PerformanceProblem } from "@/lib/types";
+
 /** A small, serializable snapshot of the headline metrics for a session. */
 export interface SessionStats {
   problemCount: number;
@@ -17,6 +19,8 @@ export interface SavedSession {
   mode?: string;
   isolateName?: string;
   stats: SessionStats;
+  /** Ranked problems captured at save time, used to diff before/after fixes. */
+  problems?: PerformanceProblem[];
   report: unknown;
 }
 
@@ -91,4 +95,103 @@ export function summarizeComparison(rows: ComparisonRow[]): ComparisonSummary {
     headline = "No significant change.";
   }
   return { improved, regressed, headline };
+}
+
+/**
+ * Orders two sessions chronologically so the older one is treated as "before"
+ * and the newer one as "after", regardless of selection order.
+ */
+export function orderChronologically(a: SavedSession, b: SavedSession): [SavedSession, SavedSession] {
+  return a.savedAt <= b.savedAt ? [a, b] : [b, a];
+}
+
+/** A problem that exists in both sessions, tracked with its impact movement. */
+export interface PersistingProblem {
+  id: string;
+  before: PerformanceProblem;
+  after: PerformanceProblem;
+  /** after.impact - before.impact (negative = lower priority = improved). */
+  impactDelta: number;
+}
+
+/** The stat-by-stat fix report: what disappeared, what appeared, what remains. */
+export interface ProblemDiff {
+  fixed: PerformanceProblem[];
+  added: PerformanceProblem[];
+  persisting: PersistingProblem[];
+}
+
+function impactOf(p: PerformanceProblem): number {
+  return p.impact ?? 0;
+}
+
+function byImpactDesc(a: PerformanceProblem, b: PerformanceProblem): number {
+  return impactOf(b) - impactOf(a);
+}
+
+/**
+ * Compares the ranked problems of two sessions by their stable `id`.
+ * Problems present only in `before` were fixed; only in `after` are new;
+ * present in both are persisting (with an impact delta).
+ */
+export function diffProblems(before: SavedSession, after: SavedSession): ProblemDiff {
+  const beforeProblems = before.problems ?? [];
+  const afterProblems = after.problems ?? [];
+  const beforeById = new Map(beforeProblems.map((p) => [p.id, p]));
+  const afterById = new Map(afterProblems.map((p) => [p.id, p]));
+
+  const fixed = beforeProblems.filter((p) => !afterById.has(p.id)).sort(byImpactDesc);
+  const added = afterProblems.filter((p) => !beforeById.has(p.id)).sort(byImpactDesc);
+  const persisting: PersistingProblem[] = beforeProblems
+    .filter((p) => afterById.has(p.id))
+    .map((b) => {
+      const a = afterById.get(b.id)!;
+      return { id: b.id, before: b, after: a, impactDelta: impactOf(a) - impactOf(b) };
+    })
+    .sort((x, y) => x.impactDelta - y.impactDelta);
+
+  return { fixed, added, persisting };
+}
+
+export interface ProblemDiffSummary {
+  headline: string;
+  tone: "good" | "bad" | "neutral";
+}
+
+/** A one-line verdict for the problem fix report. */
+export function summarizeProblemDiff(diff: ProblemDiff): ProblemDiffSummary {
+  const { fixed, added, persisting } = diff;
+  const improved = persisting.filter((p) => p.impactDelta < 0).length;
+  const worsened = persisting.filter((p) => p.impactDelta > 0).length;
+
+  if (fixed.length === 0 && added.length === 0 && persisting.length === 0) {
+    return { headline: "No problems captured in either session.", tone: "neutral" };
+  }
+  if (fixed.length > 0 && added.length === 0) {
+    return {
+      headline: `Fixed ${fixed.length} problem${fixed.length === 1 ? "" : "s"}${
+        persisting.length > 0 ? `, ${persisting.length} still open` : " — all clear"
+      }.`,
+      tone: "good",
+    };
+  }
+  if (added.length > 0 && fixed.length === 0) {
+    return {
+      headline: `Regression: ${added.length} new problem${added.length === 1 ? "" : "s"} appeared.`,
+      tone: "bad",
+    };
+  }
+  if (fixed.length > 0 && added.length > 0) {
+    return {
+      headline: `Mixed: fixed ${fixed.length}, but ${added.length} new appeared.`,
+      tone: added.length > fixed.length ? "bad" : "neutral",
+    };
+  }
+  return {
+    headline:
+      improved > 0 && worsened === 0
+        ? `${improved} problem${improved === 1 ? "" : "s"} got cheaper, none regressed.`
+        : `${persisting.length} problem${persisting.length === 1 ? "" : "s"} still open.`,
+    tone: "neutral",
+  };
 }

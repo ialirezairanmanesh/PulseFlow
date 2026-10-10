@@ -37,12 +37,52 @@ container_name() {
   echo "redroid-$1"
 }
 
+# Redroid needs Android binder IPC on the host. Ubuntu ships binder_linux as a
+# module with CONFIG_ANDROID_BINDER_DEVICES="" so nothing appears under /dev
+# until binderfs is mounted. Without it the container exits (~129) or ADB
+# stays "Connection refused" until the wait times out.
+ensure_binder() {
+  if [[ -c /dev/binder ]] || [[ -c /dev/binderfs/binder ]]; then
+    return 0
+  fi
+
+  echo "  [redroid] binder not found — loading binder_linux + mounting binderfs..."
+  if ! docker run --rm --privileged --pid=host \
+    -v /lib/modules:/lib/modules:ro \
+    alpine:3.20 sh -c '
+      set -e
+      if ! grep -q "^binder_linux" /proc/modules 2>/dev/null; then
+        ko="/lib/modules/$(uname -r)/kernel/drivers/android/binder_linux.ko"
+        if [ -f "$ko" ]; then
+          insmod "$ko" devices="binder,hwbinder,vndbinder" 2>/dev/null \
+            || insmod "$ko" \
+            || true
+        fi
+      fi
+      nsenter -t 1 -m -- sh -c "
+        mkdir -p /dev/binderfs
+        mountpoint -q /dev/binderfs || mount -t binder binder /dev/binderfs
+        test -c /dev/binderfs/binder
+      "
+    '; then
+    echo "  [redroid] failed to set up binderfs." >&2
+    echo "  Try manually:" >&2
+    echo "    sudo modprobe binder_linux devices=binder,hwbinder,vndbinder" >&2
+    echo "    sudo mkdir -p /dev/binderfs && sudo mount -t binder binder /dev/binderfs" >&2
+    return 1
+  fi
+  echo "  [redroid] binderfs ready."
+}
+
 start() {
   local name="$1"
   local version="${2:-14.0.0-latest}"
   local port="${ADB_PORTS[$name]:-5575}"
   local cname
+  local boot_timeout="${REDROID_BOOT_TIMEOUT:-90}"
   cname="$(container_name "$name")"
+
+  ensure_binder
 
   if docker ps -a --format '{{.Names}}' | grep -q "^${cname}$"; then
     echo "  [$cname] already exists (stopped). Starting..."
@@ -62,17 +102,28 @@ start() {
       androidboot.redroid_fps="${REDROID_FPS}"
   fi
 
-  echo "  [$cname] waiting for boot (up to 60s)..."
+  # Drop stale ADB sessions from a previous container on the same port.
+  "$ADB_BIN" disconnect "localhost:${port}" >/dev/null 2>&1 || true
+
+  echo "  [$cname] waiting for boot (up to ${boot_timeout}s)..."
   local waited=0
-  while (( waited < 60 )); do
-    if "$ADB_BIN" connect "localhost:${port}" 2>/dev/null && "$ADB_BIN" -s "localhost:${port}" shell getprop sys.boot_completed 2>/dev/null | grep -q "1"; then
+  while (( waited < boot_timeout )); do
+    if ! docker ps --format '{{.Names}}' | grep -q "^${cname}$"; then
+      echo "  [$cname] container exited early — binder/host setup is usually the cause." >&2
+      docker logs "$cname" 2>&1 | tail -40 >&2 || true
+      return 1
+    fi
+    # Quiet connect/shell failures while Android is still booting.
+    if "$ADB_BIN" connect "localhost:${port}" >/dev/null 2>&1 \
+      && "$ADB_BIN" -s "localhost:${port}" shell getprop sys.boot_completed 2>/dev/null \
+        | tr -d '\r' | grep -qx "1"; then
       echo "  [$cname] booted. ADB: localhost:${port}"
       return 0
     fi
     sleep 3
     waited=$((waited + 3))
   done
-  echo "  [$cname] boot timed out — check with: docker logs $cname"
+  echo "  [$cname] boot timed out — check with: docker logs $cname" >&2
   return 1
 }
 
