@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Snowflake, CircleDot, FileDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -41,6 +42,43 @@ export function ProblemsList() {
   // pre-computed snapshot read-only (no Record/Freeze controls).
   const isSharedView = Boolean(sharedView) && !connected;
 
+  const [focusRoute, setFocusRoute] = useState("");
+  const [warmupSec, setWarmupSec] = useState(0);
+
+  // Route focus + cold-start (warmup) filter, applied to every problem source.
+  const liveStalls = probeFrozen && problemsSnapshot ? problemsSnapshot.stalls : stalls;
+  const routes = useMemo(() => {
+    const set = new Set<string>();
+    for (const s of hot?.screens ?? []) if (s.route && s.route !== "(unnamed)") set.add(s.route);
+    if (hot?.currentRoute) set.add(hot.currentRoute);
+    for (const s of liveStalls?.stalls ?? []) if (s.route) set.add(s.route);
+    for (const e of appErrors) if (e.route) set.add(e.route);
+    return [...set].sort();
+  }, [hot, liveStalls, appErrors]);
+
+  const warmupCutoff = warmupSec > 0 && points.length > 0 ? points[0].t + warmupSec * 1000 : 0;
+  const activePoints = warmupCutoff ? points.filter((p) => p.t >= warmupCutoff) : points;
+
+  const routeMatch = (route?: string) => !focusRoute || !route || route === focusRoute;
+  const focusHot =
+    focusRoute && hot
+      ? {
+          ...hot,
+          widgets: hot.widgets.filter((w) => routeMatch(w.route)),
+          tree: hot.tree?.filter((w) => routeMatch(w.route)),
+          screens: hot.screens.filter((s) => routeMatch(s.route)),
+        }
+      : hot;
+  const focusStalls =
+    focusRoute && liveStalls
+      ? { ...liveStalls, stalls: liveStalls.stalls.filter((s) => routeMatch(s.route)) }
+      : liveStalls;
+  const focusErrors = focusRoute ? appErrors.filter((e) => routeMatch(e.route)) : appErrors;
+  const focusCauses =
+    focusRoute && rebuildCauses
+      ? { ...rebuildCauses, roots: rebuildCauses.roots.filter((r) => routeMatch(r.route)) }
+      : rebuildCauses;
+
   const input = isSharedView
     ? {
         hot: sharedView!.hot,
@@ -56,9 +94,9 @@ export function ProblemsList() {
     : probeFrozen && problemsSnapshot
       ? problemsSnapshot
       : {
-          hot,
+          hot: focusHot,
           hotAvailable,
-          latest: points.at(-1),
+          latest: activePoints.at(-1),
           gcEvents,
           cpuProfile,
           memoryDiff,
@@ -80,12 +118,12 @@ export function ProblemsList() {
           cpuProfile: input.cpuProfile,
           memoryDiff: input.memoryDiff,
           network: input.network ?? network,
-          points: sharedView ? [] : points,
+          points: sharedView ? [] : activePoints,
           scenarioResult: input.scenarioResult,
           scenarioRunning: input.scenarioRunning,
-          rebuildCauses,
-          errors: appErrors,
-          stalls: probeFrozen && problemsSnapshot ? problemsSnapshot.stalls : stalls,
+          rebuildCauses: focusCauses,
+          errors: focusErrors,
+          stalls: probeFrozen && problemsSnapshot ? problemsSnapshot.stalls : focusStalls,
         });
 
   const verdict = isSharedView
@@ -93,7 +131,7 @@ export function ProblemsList() {
     : isRecording
       ? null
       : computeVerdict({
-          points,
+          points: activePoints,
           problems,
           budgetMs: input.latest?.buildBudgetMs,
         });
@@ -104,8 +142,8 @@ export function ProblemsList() {
 
   const hasDetails =
     (input.hot?.screens?.length ?? 0) > 0 ||
-    (rebuildCauses?.roots.length ?? 0) > 0 ||
-    appErrors.length > 0;
+    (focusCauses?.roots.length ?? 0) > 0 ||
+    focusErrors.length > 0;
 
   return (
     <div className="space-y-4">
@@ -174,6 +212,46 @@ export function ProblemsList() {
           {sharedBaselines.length > 0 &&
             ` · ${sharedBaselines.length} baseline${sharedBaselines.length > 1 ? "s" : ""} restored`}
         </p>
+      )}
+
+      {connected && !isSharedView && (
+        <section className="flex flex-wrap items-center gap-2 rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm backdrop-blur-sm">
+          <span className="text-[var(--ink-faint)]">Focus</span>
+          <select
+            aria-label="Focus route"
+            value={focusRoute}
+            onChange={(e) => setFocusRoute(e.target.value)}
+            className="rounded-md border border-white/10 bg-black/40 px-2 py-1 text-[var(--ink)] focus:border-[var(--accent)] focus:outline-none"
+          >
+            <option value="">All routes</option>
+            {routes.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+          </select>
+          <span className="text-[var(--ink-faint)]">· exclude first</span>
+          <select
+            aria-label="Exclude cold start"
+            value={warmupSec}
+            onChange={(e) => setWarmupSec(Number(e.target.value))}
+            className="rounded-md border border-white/10 bg-black/40 px-2 py-1 text-[var(--ink)] focus:border-[var(--accent)] focus:outline-none"
+          >
+            {[0, 2, 5, 10, 20].map((s) => (
+              <option key={s} value={s}>
+                {s === 0 ? "off" : `${s}s`}
+              </option>
+            ))}
+          </select>
+          {(focusRoute || warmupSec > 0) && (
+            <span className="text-xs text-[var(--ink-faint)]">
+              {focusRoute ? `route ${focusRoute}` : "all routes"}
+              {warmupSec > 0
+                ? ` · dropped ${points.length - activePoints.length} early samples`
+                : ""}
+            </span>
+          )}
+        </section>
       )}
 
       {(controlMessage || error) && (
