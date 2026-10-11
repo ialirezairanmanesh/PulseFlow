@@ -365,7 +365,8 @@ Tools: session `pulseflow_status`, `pulseflow_discover`, `pulseflow_connect`,
 `pulseflow_disconnect`; findings `pulseflow_report`, `pulseflow_problems`,
 `pulseflow_widgets`, `pulseflow_frames`, `pulseflow_cpu`, `pulseflow_memory`,
 `pulseflow_network`, `pulseflow_device`, `pulseflow_errors`, `pulseflow_logs`;
-controls `pulseflow_debug_option`, `pulseflow_hot_widgets`.
+baselines `pulseflow_snapshot` / `pulseflow_compare`; controls `pulseflow_debug_option`,
+`pulseflow_hot_widgets`.
 
 ---
 

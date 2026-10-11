@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Built bundle for the published pulseflow-mcp npm package.
+    "mcp/npm/dist/**",
   ]),
 ]);
 

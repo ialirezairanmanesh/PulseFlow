@@ -15,6 +15,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { TOOLS, findTool, type ToolContext } from "@/lib/mcp/tools";
+import type { SavedSession } from "@/lib/session-history";
 import { BridgeClient } from "./bridge-client";
 
 const BRIDGE_URL =
@@ -41,10 +42,13 @@ if (AUTO_CONNECT_URL) {
 }
 
 const reportDir = mkdtempSync(join(tmpdir(), "pulseflow-mcp-"));
+// Named before/after baselines captured via pulseflow_snapshot.
+const snapshots = new Map<string, SavedSession>();
 
 function makeContext(): ToolContext {
   return {
     state: client.state,
+    snapshots,
     send: (msg) => client.send(msg),
     waitFor: (type, timeoutMs) => client.waitFor(type, timeoutMs),
     writeFile: (fileName, content) => {

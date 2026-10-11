@@ -306,8 +306,9 @@ It is published on npm as **`pulseflow-mcp`** — no install, just point your cl
 **Tools** — session: `pulseflow_status`, `pulseflow_discover`, `pulseflow_connect`,
 `pulseflow_disconnect`. Findings: `pulseflow_report` (agent-ready brief), `pulseflow_problems`
 (ranked + fixes), `pulseflow_widgets`, `pulseflow_frames`, `pulseflow_cpu`, `pulseflow_memory`,
-`pulseflow_network`, `pulseflow_device`, `pulseflow_errors`, `pulseflow_logs`. Controls:
-`pulseflow_debug_option`, `pulseflow_hot_widgets`.
+`pulseflow_network`, `pulseflow_device`, `pulseflow_errors`, `pulseflow_logs`. Baselines:
+`pulseflow_snapshot` (save "before") and `pulseflow_compare` (diff "before" → "after").
+Controls: `pulseflow_debug_option`, `pulseflow_hot_widgets`.
 
 **Developing the server** — from `docs/pulseflow`:
 

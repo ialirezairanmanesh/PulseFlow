@@ -171,6 +171,7 @@ function fakeContext(state = scripted()): { ctx: ToolContext; sent: unknown[] } 
   const sent: unknown[] = [];
   const ctx: ToolContext = {
     state,
+    snapshots: new Map(),
     send: (m) => sent.push(m),
     waitFor: vi.fn().mockResolvedValue(null),
     writeFile: (name) => `/tmp/${name}`,
@@ -240,5 +241,43 @@ describe("tool registry", () => {
     const res = await findTool("pulseflow_hot_widgets")!.handler(ctx, { action: "nope" });
     expect(res.isError).toBe(true);
     expect(sent).toHaveLength(0);
+  });
+
+  it("snapshots a baseline and compares it after a fix", async () => {
+    const state = scripted();
+    const { ctx } = fakeContext(state);
+
+    const saved = await findTool("pulseflow_snapshot")!.handler(ctx, { label: "before" });
+    expect(saved.content[0].text).toContain('Saved baseline "before"');
+
+    // Simulate a fix: calm frames, no hot rebuilds, no errors.
+    state.hot = null;
+    state.hotAvailable = true;
+    state.points = [point({ buildMs: 5, rasterMs: 5, frameMs: 10, jank: 0 })];
+    state.appErrors = [];
+    state.rebuildCauses = null;
+    await findTool("pulseflow_snapshot")!.handler(ctx, { label: "after" });
+
+    const res = await findTool("pulseflow_compare")!.handler(ctx, {
+      before: "before",
+      after: "after",
+    });
+    expect(res.isError).toBeFalsy();
+    expect(res.content[0].text).toContain("PulseFlow compare");
+    expect(res.content[0].text).toContain("## Metrics");
+    expect(res.content[0].text).toMatch(/Fixed|Still open/);
+  });
+
+  it("pulseflow_compare flags unknown baselines", async () => {
+    const { ctx } = fakeContext();
+    const res = await findTool("pulseflow_compare")!.handler(ctx, { before: "x", after: "y" });
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toMatch(/Unknown baseline/);
+  });
+
+  it("pulseflow_snapshot requires a label", async () => {
+    const { ctx } = fakeContext();
+    const res = await findTool("pulseflow_snapshot")!.handler(ctx, {});
+    expect(res.isError).toBe(true);
   });
 });

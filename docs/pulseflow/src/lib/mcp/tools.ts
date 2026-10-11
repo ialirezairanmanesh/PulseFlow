@@ -11,6 +11,15 @@ import type {
   DebugOptionId,
   PerformanceProblem,
 } from "@/lib/types";
+import type { SavedSession } from "@/lib/session-history";
+import {
+  compareSessions,
+  diffProblems,
+  formatDelta,
+  pctChange,
+  summarizeComparison,
+  summarizeProblemDiff,
+} from "@/lib/session-history";
 import {
   hasTelemetry,
   problemsOf,
@@ -32,6 +41,8 @@ export interface ToolResult {
 
 export interface ToolContext {
   state: McpSessionState;
+  /** Named before/after baselines captured with `pulseflow_snapshot`. */
+  snapshots: Map<string, SavedSession>;
   send(msg: BridgeClientMessage): void;
   waitFor(
     type: BridgeServerMessage["type"],
@@ -95,6 +106,69 @@ function problemLine(p: PerformanceProblem): string {
 function problemsMarkdown(problems: PerformanceProblem[]): string {
   if (!problems.length) return "_No ranked problems in this session._";
   return problems.map(problemLine).join("\n\n");
+}
+
+/** Capture the current session as a comparable baseline. */
+function snapshotFromState(state: McpSessionState, label: string): SavedSession {
+  return {
+    id: label,
+    label,
+    savedAt: Date.now(),
+    mode: state.mode,
+    isolateName: state.isolateName,
+    stats: sessionStatsOf(state),
+    problems: problemsOf(state),
+    report: null,
+  };
+}
+
+/** Markdown diff of two baselines: metric deltas + fixed/new/persisting problems. */
+function compareMarkdown(before: SavedSession, after: SavedSession): string {
+  const rows = compareSessions(before, after);
+  const summary = summarizeComparison(rows);
+  const diff = diffProblems(before, after);
+  const pdiff = summarizeProblemDiff(diff);
+
+  const lines: string[] = [
+    `# PulseFlow compare: "${before.label ?? before.id}" → "${after.label ?? after.id}"`,
+    "",
+    `**${pdiff.headline}**`,
+    summary.headline,
+    "",
+    "## Metrics",
+    "",
+    "| Metric | Before | After | Delta |",
+    "| --- | --- | --- | --- |",
+  ];
+  for (const row of rows) {
+    const delta =
+      row.delta === 0
+        ? "no change"
+        : row.key === "jankRatio"
+          ? formatDelta(row.key, row.delta)
+          : `${formatDelta(row.key, row.delta)} (${pctChange(row.key, row.before, row.after)})`;
+    lines.push(
+      `| ${row.label} | ${row.before.toFixed(2)} | ${row.after.toFixed(2)} | ${delta} |`,
+    );
+  }
+  if (diff.fixed.length) {
+    lines.push("", `## Fixed (${diff.fixed.length})`, "", problemsMarkdown(diff.fixed));
+  }
+  if (diff.added.length) {
+    lines.push("", `## New / regressed (${diff.added.length})`, "", problemsMarkdown(diff.added));
+  }
+  if (diff.persisting.length) {
+    lines.push("", `## Still open (${diff.persisting.length})`, "");
+    for (const p of diff.persisting) {
+      lines.push(
+        `- [${p.after.severity.toUpperCase()}] ${p.after.title} — impact ${
+          p.impactDelta >= 0 ? "+" : ""
+        }${p.impactDelta}`,
+        `  fix: ${p.after.action}`,
+      );
+    }
+  }
+  return lines.join("\n");
 }
 
 /** Best-effort target for `connect` when no url is given. */
@@ -246,6 +320,52 @@ export const TOOLS: ToolDef[] = [
           problemsMarkdown(problems),
         ].join("\n"),
       );
+    },
+  },
+  {
+    name: "pulseflow_snapshot",
+    description:
+      "Save the current session under a name (e.g. \"before\") so you can compare it after a fix with pulseflow_compare. Captures the ranked problems and headline metrics.",
+    inputSchema: {
+      type: "object",
+      properties: { label: { type: "string", description: "Baseline name, e.g. before / after" } },
+      required: ["label"],
+      additionalProperties: false,
+    },
+    handler: (ctx, args) => {
+      const label = String(args.label ?? "").trim();
+      if (!label) return text("label is required", true);
+      const snapshot = snapshotFromState(ctx.state, label);
+      ctx.snapshots.set(label, snapshot);
+      return text(
+        `Saved baseline "${label}" — ${snapshot.stats.problemCount} problems, P95 build ${snapshot.stats.p95BuildMs} ms.`,
+      );
+    },
+  },
+  {
+    name: "pulseflow_compare",
+    description:
+      "Compare two baselines saved with pulseflow_snapshot and report what changed: metric deltas plus fixed / new / still-open problems with impact changes. Use it to confirm a fix actually helped.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        before: { type: "string", description: "Label of the earlier baseline" },
+        after: { type: "string", description: "Label of the later baseline" },
+      },
+      required: ["before", "after"],
+      additionalProperties: false,
+    },
+    handler: (ctx, args) => {
+      const before = ctx.snapshots.get(String(args.before ?? ""));
+      const after = ctx.snapshots.get(String(args.after ?? ""));
+      if (!before || !after) {
+        const known = [...ctx.snapshots.keys()].join(", ") || "(none)";
+        return text(
+          `Unknown baseline(s). Saved: ${known}. Capture with pulseflow_snapshot first.`,
+          true,
+        );
+      }
+      return text(compareMarkdown(before, after));
     },
   },
   {
