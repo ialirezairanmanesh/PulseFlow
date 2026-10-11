@@ -329,4 +329,52 @@ describe("tool registry", () => {
     expect(res.isError).toBe(true);
     expect(sent).toHaveLength(0);
   });
+
+  it("pulseflow_cpu records and waits for the finished profile", async () => {
+    const state = scripted();
+    const sent: unknown[] = [];
+    const predicates: Array<((m: BridgeServerMessage) => boolean) | undefined> = [];
+    const ctx: ToolContext = {
+      state,
+      snapshots: new Map(),
+      send: (m) => sent.push(m),
+      waitFor: async (_type, _timeoutMs, predicate) => {
+        predicates.push(predicate);
+        const finished: BridgeServerMessage = {
+          type: "cpuProfile",
+          available: true,
+          recording: false,
+          profile: {
+            durationMs: 4000,
+            sampleCount: 3,
+            capturedAt: 0,
+            flameRoot: { name: "root", value: 1 },
+            topFunctions: [
+              { name: "build", qualifiedName: "A.build", selfMs: 1, totalMs: 2, selfPercent: 60, totalPercent: 80 },
+            ],
+          },
+        };
+        applyMessage(state, finished);
+        return finished;
+      },
+      writeFile: (n) => `/tmp/${n}`,
+      log: () => {},
+    };
+
+    const res = await findTool("pulseflow_cpu")!.handler(ctx, { recordMs: 4000 });
+    const payload = JSON.parse(res.content[0].text);
+    expect(payload.available).toBe(true);
+    expect(payload.hotspots[0].name).toBe("A.build");
+    expect(sent[0]).toEqual({ type: "cpuRecord", action: "start", durationMs: 4000 });
+
+    // The wait must ignore the "recording" acknowledgement.
+    const predicate = predicates[0];
+    expect(predicate).toBeTypeOf("function");
+    expect(
+      predicate!({ type: "cpuProfile", available: true, recording: true } as BridgeServerMessage),
+    ).toBe(false);
+    expect(
+      predicate!({ type: "cpuProfile", available: true, recording: false } as BridgeServerMessage),
+    ).toBe(true);
+  });
 });

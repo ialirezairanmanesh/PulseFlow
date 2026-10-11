@@ -441,7 +441,12 @@ export const TOOLS: ToolDef[] = [
       const recordMs = numArg(args, "recordMs", 0);
       if (recordMs > 0) {
         ctx.send({ type: "cpuRecord", action: "start", durationMs: recordMs });
-        await ctx.waitFor("cpuProfile", recordMs + 8_000);
+        // Wait for the finished profile, not the "recording" acknowledgement.
+        await ctx.waitFor(
+          "cpuProfile",
+          recordMs + 30_000,
+          (m) => m.type === "cpuProfile" && m.recording === false,
+        );
       }
       const profile = ctx.state.cpuProfile;
       if (!profile) {

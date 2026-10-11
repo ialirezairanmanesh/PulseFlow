@@ -1377,10 +1377,7 @@ class BridgeSession {
           extent = end - origin > 1 ? end - origin : 1;
         }
       }
-      final Map<String, dynamic>? result = await _raw('getCpuSamples', <String, dynamic>{
-        'timeOriginMicros': origin,
-        'timeExtentMicros': extent,
-      }, isolateId: _isolateId);
+      final Map<String, dynamic>? result = await _fetchCpuSamples(origin, extent);
       final CpuProfileSummary profile = transformCpuSamples(result ?? <String, dynamic>{}, durationMs);
       _cpuProfileCache = profile;
       if (result != null) _lastCpuRaw = result;
@@ -1391,13 +1388,39 @@ class BridgeSession {
         'profile': profile.toJson(),
         'message': 'CPU profile: ${profile.sampleCount} samples over ${durationMs} ms',
       });
+    } on TimeoutException {
+      _send(<String, Object?>{
+        'type': 'cpuProfile',
+        'available': false,
+        'recording': false,
+        'message':
+            'CPU sample fetch timed out — try a shorter recording, or run in profile mode with the profiler enabled.',
+      });
     } catch (error) {
       _send(<String, Object?>{
         'type': 'cpuProfile',
         'available': false,
         'recording': false,
-        'message': '$error',
+        'message': 'CPU profile failed: $error',
       });
+    }
+  }
+
+  /// Fetches CPU samples for a window, retrying once over the most recent half
+  /// when a long recording exceeds the (generous) timeout.
+  Future<Map<String, dynamic>?> _fetchCpuSamples(int origin, int extent) async {
+    const Duration timeout = Duration(seconds: 25);
+    try {
+      return await _raw('getCpuSamples', <String, dynamic>{
+        'timeOriginMicros': origin,
+        'timeExtentMicros': extent,
+      }, isolateId: _isolateId, timeout: timeout);
+    } on TimeoutException {
+      final int retryExtent = extent > 2 ? extent ~/ 2 : extent;
+      return _raw('getCpuSamples', <String, dynamic>{
+        'timeOriginMicros': origin,
+        'timeExtentMicros': retryExtent,
+      }, isolateId: _isolateId, timeout: timeout);
     }
   }
 
