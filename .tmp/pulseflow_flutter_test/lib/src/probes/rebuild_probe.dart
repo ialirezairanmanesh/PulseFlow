@@ -99,6 +99,17 @@ bool isFrameworkWidgetName(String name) {
   return _frameworkWidgets.contains(name);
 }
 
+/// Whether we should try to resolve `file:line` for a widget named [name].
+///
+/// Unlike [isFrameworkWidgetName] this does NOT reject private (`_Foo`) widgets:
+/// app rebuild roots are frequently private widgets/States, and we still want
+/// their source. Only the known framework shells and `*Transition` are skipped;
+/// any framework file that slips through is dropped by [isAppSourceFile].
+bool isSourceWorthyWidgetName(String name) {
+  if (name.endsWith('Transition')) return false;
+  return !_frameworkWidgets.contains(name);
+}
+
 class WidgetEntry {
   WidgetEntry({
     required this.id,
@@ -236,9 +247,9 @@ class RebuildProbe {
     if (entry == null) {
       String? sourceFile;
       int? sourceLine;
-      if (resolveSource && !isFrameworkWidgetName(name)) {
+      if (resolveSource && isSourceWorthyWidgetName(name)) {
         final SourceLocation? location = resolveElementSource(element);
-        if (location != null && _isAppSource(location.file)) {
+        if (location != null && isAppSourceFile(location.file, appPackage)) {
           sourceFile = location.file;
           sourceLine = location.line;
         }
@@ -399,12 +410,6 @@ class RebuildProbe {
       'roots': roots.take(limit).toList(),
       'attributed': attributed.take(limit).toList(),
     };
-  }
-
-  bool _isAppSource(String file) {
-    final String? pkg = appPackage;
-    if (pkg == null || pkg.isEmpty) return true;
-    return file.contains(pkg);
   }
 
   void _pruneWindow(DateTime cutoff) {

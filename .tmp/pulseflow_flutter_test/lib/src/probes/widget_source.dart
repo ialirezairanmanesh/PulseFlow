@@ -29,6 +29,25 @@ SourceLocation? parseCreationLocation(Object? raw) {
   return SourceLocation(file: file, line: parsedLine);
 }
 
+/// True when [file] looks like the Flutter SDK or dart core, not app code.
+///
+/// Fallback used when `appPackage` is not configured, so rebuild roots that are
+/// private framework widgets do not surface `/flutter/packages/flutter/...`.
+bool looksLikeFrameworkSource(String file) {
+  if (file.isEmpty) return true;
+  if (file.startsWith('dart:')) return true;
+  if (file.startsWith('package:flutter/')) return true;
+  return file.contains('/flutter/packages/flutter');
+}
+
+/// Whether [file] belongs to the app. With an [appPackage] the file must contain
+/// it; otherwise framework/dart sources are rejected.
+bool isAppSourceFile(String file, String? appPackage) {
+  final String? pkg = appPackage;
+  if (pkg != null && pkg.isNotEmpty) return file.contains(pkg);
+  return !looksLikeFrameworkSource(file);
+}
+
 /// Returns the source location of [element], or `null` when unavailable.
 ///
 /// Only works in debug/profile builds that track widget creation locations
