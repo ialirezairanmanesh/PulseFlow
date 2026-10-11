@@ -278,35 +278,44 @@ find *what* to fix (rebuild causes, sources, overflow) and **Profile** to measur
 
 ## MCP server (let your coding agent read the session)
 
-`mcp/server.ts` is a local **stdio MCP server** that connects to the same bridge the dashboard
-uses, so an agent (Command Code / Claude / Cursor) can find, fix, and verify problems without
-copy-pasting reports. It reuses the dashboard's exact `buildProblems` / `computeVerdict` /
+A local **stdio MCP server** connects to the same bridge the dashboard uses, so an agent
+(Command Code / Claude / Cursor) can find, fix, and verify problems without copy-pasting
+reports. It reuses the dashboard's exact `buildProblems` / `computeVerdict` /
 `buildAgentReportMarkdown` logic, so rankings and the health score never drift.
 
-**Run it** (bridge must be up — `make run` starts it on 3847):
+It is published on npm as **`pulseflow-mcp`** — no install, just point your client at
+`npx`. The bridge must be running (`make run`, port 3847).
 
-```bash
-npm run mcp          # from docs/pulseflow
-```
-
-**Register with Command Code** (project scope, writes `.mcp.json`):
-
-```bash
-cmd mcp add --scope project pulseflow -- bash "$PWD/mcp/run.sh"
-```
-
-A ready-made `.mcp.json` also lives at the repo root. For Claude/Cursor, the equivalent is:
+**Cursor** — `.cursor/mcp.json` (project) or `~/.cursor/mcp.json` (global):
 
 ```json
-{ "mcpServers": { "pulseflow": { "command": "bash",
-  "args": ["/abs/path/docs/pulseflow/mcp/run.sh"] } } }
+{
+  "mcpServers": {
+    "pulseflow": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "pulseflow-mcp"]
+    }
+  }
+}
 ```
+
+**Command Code** — `cmd mcp add pulseflow -- npx -y pulseflow-mcp`.
+**Claude / other MCP clients** — the same `mcpServers` entry as above.
 
 **Tools** — session: `pulseflow_status`, `pulseflow_discover`, `pulseflow_connect`,
 `pulseflow_disconnect`. Findings: `pulseflow_report` (agent-ready brief), `pulseflow_problems`
 (ranked + fixes), `pulseflow_widgets`, `pulseflow_frames`, `pulseflow_cpu`, `pulseflow_memory`,
 `pulseflow_network`, `pulseflow_device`, `pulseflow_errors`, `pulseflow_logs`. Controls:
 `pulseflow_debug_option`, `pulseflow_hot_widgets`.
+
+**Developing the server** — from `docs/pulseflow`:
+
+```bash
+npm run mcp          # run the TypeScript source directly (tsx)
+npm run mcp:build    # bundle to mcp/npm/dist/index.js
+cd mcp/npm && npm publish   # publish pulseflow-mcp (needs npm auth)
+```
 
 **Env**: `PULSEFLOW_BRIDGE_URL` (default `ws://127.0.0.1:3847/bridge`), `PULSEFLOW_VM_URL`
 (optional — auto-connect to this VM Service URL at startup).

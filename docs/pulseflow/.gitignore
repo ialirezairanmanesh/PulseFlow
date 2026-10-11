@@ -47,3 +47,6 @@ next-env.d.ts
 # vendored ws-scrcpy (cloned by device-mirror/setup.sh)
 /device-mirror/ws-scrcpy/
 
+# built bundle for the published pulseflow-mcp npm package
+/mcp/npm/dist/
+

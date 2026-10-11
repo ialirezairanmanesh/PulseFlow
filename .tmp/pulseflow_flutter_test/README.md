@@ -313,8 +313,8 @@ can read the live session for you: rank the problems, explain each one, and prop
 fixes, using the same ranking as the **Problems** page. It proxies the same bridge,
 so you run nothing extra beyond PulseFlow itself.
 
-This path needs the **PulseFlow repo** and its bridge. Clone and start it (the first
-run installs the Node and Dart dependencies, including the MCP server's):
+You still need the **PulseFlow bridge** running. Clone the repo and start it (the first
+run installs the Node and Dart dependencies):
 
 ```bash
 git clone https://github.com/ialirezairanmanesh/PulseFlow.git
@@ -322,38 +322,34 @@ cd PulseFlow
 make run          # Dart bridge on :3847 (+ dashboard on :3846)
 ```
 
-Only the **bridge** matters for the MCP; the dashboard UI is optional and you can
-ignore its browser tab. (Later, `make bridge` starts just the bridge once the
-dependencies are installed.) The MCP launcher lives at `docs/pulseflow/mcp/run.sh` —
-that is the command you register.
+Only the **bridge** matters for the MCP; the dashboard UI is optional and you can ignore
+its browser tab. (Later, `make bridge` starts just the bridge once the dependencies are
+installed.)
 
 ### Register the MCP server
 
-`<repo>` below is the folder you just cloned.
+The server is published on npm as **`pulseflow-mcp`**, so there is nothing to install —
+your MCP client runs it with `npx`.
 
-**Cursor** — create `<repo>/.cursor/mcp.json`:
+**Cursor** — `.cursor/mcp.json` in your project, or `~/.cursor/mcp.json` to use it everywhere:
 
 ```json
 {
   "mcpServers": {
     "pulseflow": {
       "type": "stdio",
-      "command": "bash",
-      "args": ["${workspaceFolder}/docs/pulseflow/mcp/run.sh"]
+      "command": "npx",
+      "args": ["-y", "pulseflow-mcp"]
     }
   }
 }
 ```
 
-**Command Code** — one command from the repo root:
-
-```bash
-cmd mcp add --scope project pulseflow -- bash "$PWD/docs/pulseflow/mcp/run.sh"
-```
-
-**Claude Code / other MCP clients** — use the same `mcpServers` shape, pointing the
-command at an absolute `<repo>/docs/pulseflow/mcp/run.sh`. Restart the client (or
+**Command Code** — `cmd mcp add pulseflow -- npx -y pulseflow-mcp`.
+**Claude Code / other MCP clients** — the same `mcpServers` entry. Restart the client (or
 toggle the server) after adding it.
+
+Developing from a checkout instead? Point the command at `<repo>/docs/pulseflow/mcp/run.sh`.
 
 ### Ask the agent
 

@@ -1,0 +1,44 @@
+{
+  "name": "pulseflow-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for PulseFlow — let coding agents (Cursor, Claude, Command Code) read a live Flutter performance session and find, fix, and verify problems.",
+  "license": "MIT",
+  "type": "commonjs",
+  "bin": {
+    "pulseflow-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "mcp",
+    "modelcontextprotocol",
+    "flutter",
+    "dart",
+    "performance",
+    "profiling",
+    "devtools",
+    "pulseflow"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ialirezairanmanesh/PulseFlow.git",
+    "directory": "docs/pulseflow/mcp/npm"
+  },
+  "bugs": {
+    "url": "https://github.com/ialirezairanmanesh/PulseFlow/issues"
+  },
+  "homepage": "https://github.com/ialirezairanmanesh/PulseFlow#readme",
+  "scripts": {
+    "build": "node build.mjs",
+    "prepublishOnly": "node build.mjs"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

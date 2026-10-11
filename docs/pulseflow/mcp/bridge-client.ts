@@ -55,6 +55,9 @@ export class BridgeClient {
       this.state.statusMessage = "Bridge disconnected";
       if (!this.disposed) {
         this.reconnectTimer = setTimeout(() => this.connect(), 1500);
+        // Don't hold the event loop open on a dead bridge; the stdio transport
+        // keeps the process alive while the MCP client is connected.
+        this.reconnectTimer.unref?.();
       }
     });
     ws.on("error", (err) => {
