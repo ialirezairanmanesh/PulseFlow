@@ -10,6 +10,10 @@ Without this package the dashboard can still show Build/Raster/memory/CPU via th
 Service. With it you unlock Widgets, richer Problems tips, Network capture, Leaks,
 Stalls, Scenarios, device context, and accurate engine frame timings.
 
+> Prefer working from your coding agent (Cursor, Claude Code, Command Code)? PulseFlow
+> ships an MCP server so the agent can read the session directly — see
+> [Use it from your coding agent (MCP)](#use-it-from-your-coding-agent-mcp).
+
 ---
 
 ## How PulseFlow fits together
@@ -303,14 +307,31 @@ Optional CI: the PulseFlow repo ships `pulseflow_check` (budget gate on P95 buil
 
 ## Use it from your coding agent (MCP)
 
-The PulseFlow repo also ships a **local stdio MCP server** so an agent (Cursor,
-Claude, Command Code) can read the live session and find, fix, and verify problems
-without copy-pasting reports. It reuses the dashboard's exact problem ranking and
-health score, so what the agent sees matches the **Problems** page.
+PulseFlow ships a local [Model Context Protocol](https://modelcontextprotocol.io)
+server, so an agent that speaks MCP — **Cursor**, **Claude Code**, **Command Code** —
+can read the live session for you: rank the problems, explain each one, and propose
+fixes, using the same ranking as the **Problems** page. It proxies the same bridge,
+so you run nothing extra beyond PulseFlow itself.
 
-Start the bridge (`make run`) as usual, then register the server.
+This path needs the **PulseFlow repo** and its bridge. Clone and start it (the first
+run installs the Node and Dart dependencies, including the MCP server's):
 
-**Cursor** — add `.cursor/mcp.json` in the PulseFlow checkout:
+```bash
+git clone https://github.com/ialirezairanmanesh/PulseFlow.git
+cd PulseFlow
+make run          # Dart bridge on :3847 (+ dashboard on :3846)
+```
+
+Only the **bridge** matters for the MCP; the dashboard UI is optional and you can
+ignore its browser tab. (Later, `make bridge` starts just the bridge once the
+dependencies are installed.) The MCP launcher lives at `docs/pulseflow/mcp/run.sh` —
+that is the command you register.
+
+### Register the MCP server
+
+`<repo>` below is the folder you just cloned.
+
+**Cursor** — create `<repo>/.cursor/mcp.json`:
 
 ```json
 {
@@ -324,18 +345,31 @@ Start the bridge (`make run`) as usual, then register the server.
 }
 ```
 
-**Command Code** — `cmd mcp add --scope project pulseflow -- bash "$PWD/docs/pulseflow/mcp/run.sh"`.
-Claude and Cursor use the same `mcpServers` shape; just point the command at an
-absolute `docs/pulseflow/mcp/run.sh`.
+**Command Code** — one command from the repo root:
+
+```bash
+cmd mcp add --scope project pulseflow -- bash "$PWD/docs/pulseflow/mcp/run.sh"
+```
+
+**Claude Code / other MCP clients** — use the same `mcpServers` shape, pointing the
+command at an absolute `<repo>/docs/pulseflow/mcp/run.sh`. Restart the client (or
+toggle the server) after adding it.
+
+### Ask the agent
+
+Connect to your app first — `pulseflow_connect` (or pass `{"mock": true}` for a
+device-free demo). Then ask in plain language, e.g.:
+
+> What are the top performance problems right now, and what should I fix first?
+
+The agent calls `pulseflow_report` / `pulseflow_problems` and answers with the ranked
+issues and concrete fixes. Edit the code, re-measure, repeat.
 
 Tools: session `pulseflow_status`, `pulseflow_discover`, `pulseflow_connect`,
 `pulseflow_disconnect`; findings `pulseflow_report`, `pulseflow_problems`,
 `pulseflow_widgets`, `pulseflow_frames`, `pulseflow_cpu`, `pulseflow_memory`,
 `pulseflow_network`, `pulseflow_device`, `pulseflow_errors`, `pulseflow_logs`;
 controls `pulseflow_debug_option`, `pulseflow_hot_widgets`.
-
-Typical loop: `pulseflow_connect` (or `{"mock": true}` for a device-free demo) →
-`pulseflow_report` → fix the code → re-measure.
 
 ---
 
