@@ -197,6 +197,7 @@ type PulseContextValue = {
   stopScenario: () => void;
   captureMemorySnapshot: () => void;
   diffMemorySnapshots: () => void;
+  captureAroundScenario: (scenarioId: string) => Promise<void>;
   requestRetainingPath: (classId?: string, objectId?: string) => void;
   exportTimeline: (durationMs?: number) => void;
   networkControl: (action: "refresh" | "clear" | "enable") => void;
@@ -781,6 +782,41 @@ export function PulseProvider({ children }: { children: ReactNode }) {
     [send],
   );
 
+  /** One-click: snapshot → run a scenario → snapshot → diff, so growth is tied to the scenario. */
+  const captureAroundScenario = useCallback(async (scenarioId: string) => {
+    const client = clientRef.current;
+    if (!client) return;
+    try {
+      setMemoryMessage(`Capturing a baseline before ${scenarioId}…`);
+      client.send({ type: "memorySnapshot", action: "capture" });
+      await client.request("memoryProfile", {
+        timeoutMs: 15_000,
+        predicate: (m) => m.type === "memoryProfile" && !!m.snapshot,
+      });
+      setScenarioMessage(`Running scenario ${scenarioId}…`);
+      client.send({ type: "scenario", action: "run", id: scenarioId });
+      const done = await client.request("scenarioStatus", {
+        timeoutMs: 65_000,
+        predicate: (m) => m.type === "scenarioStatus" && m.running === null,
+      });
+      client.send({ type: "memorySnapshot", action: "capture" });
+      await client.request("memoryProfile", {
+        timeoutMs: 15_000,
+        predicate: (m) => m.type === "memoryProfile" && !!m.snapshot,
+      });
+      client.send({ type: "memorySnapshot", action: "diff" });
+      await client.request("memoryProfile", {
+        timeoutMs: 15_000,
+        predicate: (m) => m.type === "memoryProfile" && !!m.diff,
+      });
+      setMemoryMessage(
+        done ? `Memory diff ready for ${scenarioId}` : `${scenarioId} did not finish within 65s`,
+      );
+    } catch {
+      setMemoryMessage("Capture around scenario failed");
+    }
+  }, []);
+
   const requestRetainingPath = useCallback(
     (classId?: string, objectId?: string) =>
       send(() =>
@@ -992,6 +1028,7 @@ export function PulseProvider({ children }: { children: ReactNode }) {
       stopScenario,
       captureMemorySnapshot,
       diffMemorySnapshots,
+      captureAroundScenario,
       requestRetainingPath,
       exportTimeline,
       networkControl,
@@ -1072,6 +1109,7 @@ export function PulseProvider({ children }: { children: ReactNode }) {
       stopScenario,
       captureMemorySnapshot,
       diffMemorySnapshots,
+      captureAroundScenario,
       requestRetainingPath,
       exportTimeline,
       networkControl,

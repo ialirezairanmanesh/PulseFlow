@@ -17,10 +17,18 @@ export type BridgeHandlers = {
   onError?: (err: Event) => void;
 };
 
+interface BridgeWaiter {
+  type: BridgeServerMessage["type"];
+  predicate?: (msg: BridgeServerMessage) => boolean;
+  resolve: (msg: BridgeServerMessage | null) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
 export class PulseBridgeClient {
   private ws: WebSocket | null = null;
   private handlers: BridgeHandlers;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private waiters: BridgeWaiter[] = [];
 
   constructor(handlers: BridgeHandlers) {
     this.handlers = handlers;
@@ -35,12 +43,14 @@ export class PulseBridgeClient {
     ws.onopen = () => this.handlers.onOpen?.();
     ws.onclose = () => {
       this.handlers.onClose?.();
+      this.resolveWaiters(); // wake awaiting requests with null
       this.reconnectTimer = setTimeout(() => this.connect(), 1500);
     };
     ws.onerror = (e) => this.handlers.onError?.(e);
     ws.onmessage = (ev) => {
       try {
         const msg = JSON.parse(String(ev.data)) as BridgeServerMessage;
+        this.resolveWaiters(msg);
         this.handlers.onMessage(msg);
       } catch {
         /* ignore */
@@ -55,8 +65,38 @@ export class PulseBridgeClient {
     this.ws.send(JSON.stringify(msg));
   }
 
+  /**
+   * Resolves with the next incoming message of `type` (optionally matching
+   * `predicate`), or `null` on timeout / disconnect. Lets callers await a
+   * specific bridge reply without threading state through React.
+   */
+  request(
+    type: BridgeServerMessage["type"],
+    options?: { timeoutMs?: number; predicate?: (msg: BridgeServerMessage) => boolean },
+  ): Promise<BridgeServerMessage | null> {
+    const timeoutMs = options?.timeoutMs ?? 8000;
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.waiters = this.waiters.filter((w) => w.timer !== timer);
+        resolve(null);
+      }, timeoutMs);
+      this.waiters.push({ type, predicate: options?.predicate, resolve, timer });
+    });
+  }
+
+  private resolveWaiters(msg?: BridgeServerMessage) {
+    this.waiters = this.waiters.filter((w) => {
+      if (msg && w.type !== msg.type) return true;
+      if (msg && w.predicate && !w.predicate(msg)) return true;
+      clearTimeout(w.timer);
+      w.resolve(msg ?? null);
+      return false;
+    });
+  }
+
   dispose() {
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.resolveWaiters();
     this.ws?.close();
     this.ws = null;
   }

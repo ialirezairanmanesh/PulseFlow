@@ -10,6 +10,7 @@ import type { BridgeClientMessage, BridgeServerMessage } from "@/lib/types";
 
 interface Waiter {
   type: BridgeServerMessage["type"];
+  predicate?: (msg: BridgeServerMessage) => boolean;
   resolve: (msg: BridgeServerMessage | null) => void;
   timer: ReturnType<typeof setTimeout>;
 }
@@ -79,6 +80,7 @@ export class BridgeClient {
   private resolveWaiters(msg: BridgeServerMessage): void {
     this.waiters = this.waiters.filter((w) => {
       if (w.type !== msg.type) return true;
+      if (w.predicate && !w.predicate(msg)) return true;
       clearTimeout(w.timer);
       w.resolve(msg);
       return false;
@@ -117,14 +119,18 @@ export class BridgeClient {
     }
   }
 
-  waitFor(type: BridgeServerMessage["type"], timeoutMs = 8000): Promise<BridgeServerMessage | null> {
+  waitFor(
+    type: BridgeServerMessage["type"],
+    timeoutMs = 8000,
+    predicate?: (msg: BridgeServerMessage) => boolean,
+  ): Promise<BridgeServerMessage | null> {
     return new Promise((resolve) => {
       const timer = setTimeout(() => {
         this.waiters = this.waiters.filter((w) => w.timer !== timer);
         resolve(null);
       }, timeoutMs);
       timer.unref?.();
-      this.waiters.push({ type, resolve, timer });
+      this.waiters.push({ type, predicate, resolve, timer });
     });
   }
 

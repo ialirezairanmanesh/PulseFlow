@@ -280,4 +280,53 @@ describe("tool registry", () => {
     const res = await findTool("pulseflow_snapshot")!.handler(ctx, {});
     expect(res.isError).toBe(true);
   });
+
+  it("pulseflow_memory around_scenario captures, runs, and diffs", async () => {
+    const state = scripted();
+    const sent: unknown[] = [];
+    const responses: BridgeServerMessage[] = [
+      { type: "memoryProfile", available: true, snapshot: { id: "s1", t: 1, heapMb: 100, externalMb: 8, classes: [] } },
+      { type: "scenarioStatus", running: null, result: { id: "listFlood", ok: true } },
+      { type: "memoryProfile", available: true, snapshot: { id: "s2", t: 2, heapMb: 140, externalMb: 8, classes: [] } },
+      {
+        type: "memoryProfile",
+        available: true,
+        diff: { fromId: "s1", toId: "s2", grew: [{ className: "Invoice", instancesDelta: 40, bytesDelta: 2 * 1024 * 1024 }] },
+      },
+    ];
+    const ctx: ToolContext = {
+      state,
+      snapshots: new Map(),
+      send: (m) => sent.push(m),
+      waitFor: vi.fn(async () => {
+        const m = responses.shift() ?? null;
+        if (m) applyMessage(state, m);
+        return m;
+      }),
+      writeFile: (n) => `/tmp/${n}`,
+      log: () => {},
+    };
+
+    const res = await findTool("pulseflow_memory")!.handler(ctx, {
+      action: "around_scenario",
+      scenario: "listFlood",
+    });
+    const payload = JSON.parse(res.content[0].text);
+    expect(payload.message).toContain("listFlood");
+    expect(payload.message).toContain("ok");
+    expect(payload.grew[0].className).toBe("Invoice");
+
+    // Orchestration: capture, run scenario, capture, diff.
+    expect(sent[0]).toEqual({ type: "memorySnapshot", action: "capture" });
+    expect(sent[1]).toEqual({ type: "scenario", action: "run", id: "listFlood" });
+    expect(sent[2]).toEqual({ type: "memorySnapshot", action: "capture" });
+    expect(sent[3]).toEqual({ type: "memorySnapshot", action: "diff" });
+  });
+
+  it("pulseflow_memory around_scenario requires a scenario id", async () => {
+    const { ctx, sent } = fakeContext();
+    const res = await findTool("pulseflow_memory")!.handler(ctx, { action: "around_scenario" });
+    expect(res.isError).toBe(true);
+    expect(sent).toHaveLength(0);
+  });
 });

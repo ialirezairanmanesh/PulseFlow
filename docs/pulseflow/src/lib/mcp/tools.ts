@@ -47,6 +47,7 @@ export interface ToolContext {
   waitFor(
     type: BridgeServerMessage["type"],
     timeoutMs?: number,
+    predicate?: (msg: BridgeServerMessage) => boolean,
   ): Promise<BridgeServerMessage | null>;
   /** Writes a file under the OS temp dir and returns its absolute path. */
   writeFile(fileName: string, content: string): string;
@@ -462,26 +463,54 @@ export const TOOLS: ToolDef[] = [
   {
     name: "pulseflow_memory",
     description:
-      "Memory picture: heap growth between snapshots, leaks (created-but-not-disposed objects), and image-cache waste. `action`: 'auto' (current), 'capture' (take a snapshot), 'diff' (capture second + diff), 'leaks' (run a leak report).",
+      "Memory picture: heap growth between snapshots, leaks, and image-cache waste. `action`: 'auto' (current), 'capture' (snapshot now), 'diff' (capture + diff), 'leaks' (leak report), or 'around_scenario' — capture, run `scenario`, capture, diff — so the growth is attributable to that scenario.",
     inputSchema: {
       type: "object",
       properties: {
-        action: { type: "string", enum: ["auto", "capture", "diff", "leaks"], description: "Default auto" },
+        action: {
+          type: "string",
+          enum: ["auto", "capture", "diff", "leaks", "around_scenario"],
+          description: "Default auto",
+        },
+        scenario: {
+          type: "string",
+          description: "Scenario id for around_scenario, e.g. listFlood / retainMemory",
+        },
       },
       additionalProperties: false,
     },
     handler: async (ctx, args) => {
       const action = typeof args.action === "string" ? args.action : "auto";
+      let note: string | undefined;
       if (action === "capture" || action === "diff") {
         ctx.send({ type: "memorySnapshot", action: "capture" });
-        await ctx.waitFor("memoryProfile", 10_000);
+        await ctx.waitFor("memoryProfile", 10_000, (m) => m.type === "memoryProfile" && !!m.snapshot);
         if (action === "diff") {
           ctx.send({ type: "memorySnapshot", action: "diff" });
-          await ctx.waitFor("memoryProfile", 10_000);
+          await ctx.waitFor("memoryProfile", 10_000, (m) => m.type === "memoryProfile" && !!m.diff);
         }
       } else if (action === "leaks") {
         ctx.send({ type: "leakControl", action: "report" });
         await ctx.waitFor("leaks", 10_000);
+      } else if (action === "around_scenario") {
+        const scenario = typeof args.scenario === "string" ? args.scenario.trim() : "";
+        if (!scenario) return text("`scenario` id is required for action=around_scenario", true);
+        ctx.send({ type: "memorySnapshot", action: "capture" });
+        await ctx.waitFor("memoryProfile", 15_000, (m) => m.type === "memoryProfile" && !!m.snapshot);
+        ctx.send({ type: "scenario", action: "run", id: scenario });
+        const done = await ctx.waitFor(
+          "scenarioStatus",
+          65_000,
+          (m) => m.type === "scenarioStatus" && m.running === null,
+        );
+        const result = done && done.type === "scenarioStatus" ? done.result : undefined;
+        ctx.send({ type: "memorySnapshot", action: "capture" });
+        await ctx.waitFor("memoryProfile", 15_000, (m) => m.type === "memoryProfile" && !!m.snapshot);
+        ctx.send({ type: "memorySnapshot", action: "diff" });
+        await ctx.waitFor("memoryProfile", 15_000, (m) => m.type === "memoryProfile" && !!m.diff);
+        note = result
+          ? `Scenario ${scenario}: ${result.ok ? "ok" : `failed (${result.reason ?? "unknown"})`}`
+          : `Scenario ${scenario}: no completion within 65s`;
       }
       const s = ctx.state;
       return json({
@@ -490,7 +519,7 @@ export const TOOLS: ToolDef[] = [
         leaks: s.leaks.slice(0, 12),
         imageCache: s.images?.cache ?? null,
         oversizedImages: s.images?.oversized?.slice(0, 12) ?? [],
-        message: s.memoryMessage ?? null,
+        message: note ?? s.memoryMessage ?? null,
       });
     },
   },

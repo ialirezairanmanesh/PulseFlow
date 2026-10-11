@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Area,
   AreaChart,
@@ -30,12 +30,23 @@ export function MemoryPanel() {
     capabilities,
     leaks,
     images,
+    scenarios,
+    scenarioRunning,
+    listScenarios,
     captureMemorySnapshot,
     diffMemorySnapshots,
+    captureAroundScenario,
     requestRetainingPath,
     leakControl,
   } = usePulse();
   const [tab, setTab] = useState<Tab>("live");
+  const [scenarioId, setScenarioId] = useState("");
+
+  useEffect(() => {
+    if (connected) listScenarios();
+  }, [connected, listScenarios]);
+
+  const scenarioValue = scenarioId || scenarios[0]?.id || "";
   const normalized = points.map(normalizePoint);
   const chartData = normalized.map((p) => ({
     ...p,
@@ -256,13 +267,40 @@ export function MemoryPanel() {
 
       {tab === "diff" && (
         <section className="rounded-xl border border-white/10 bg-black/20 px-4 py-4 backdrop-blur-sm">
-          <div className="mb-3 flex flex-wrap gap-2">
+          <div className="mb-3 flex flex-wrap items-center gap-2">
             <Button
               size="sm"
               disabled={!connected || memorySnapshots.length < 2}
               onClick={() => diffMemorySnapshots()}
             >
               Diff last two snapshots
+            </Button>
+            <span className="mx-1 h-4 w-px bg-white/10" aria-hidden />
+            <select
+              aria-label="Scenario"
+              value={scenarioValue}
+              onChange={(e) => setScenarioId(e.target.value)}
+              disabled={!connected || scenarios.length === 0}
+              className="rounded-md border border-white/10 bg-black/40 px-2 py-1 text-sm text-[var(--ink)] focus:border-[var(--accent)] focus:outline-none"
+            >
+              {scenarios.length === 0 ? (
+                <option value="">No scenarios</option>
+              ) : (
+                scenarios.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.label}
+                  </option>
+                ))
+              )}
+            </select>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={!connected || !scenarioValue || Boolean(scenarioRunning)}
+              title="Snapshot → run scenario → snapshot → diff"
+              onClick={() => void captureAroundScenario(scenarioValue)}
+            >
+              {scenarioRunning ? `Running ${scenarioRunning}…` : "Run & diff"}
             </Button>
           </div>
           {memoryMessage && (
