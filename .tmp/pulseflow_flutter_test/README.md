@@ -25,8 +25,10 @@ PulseFlow dashboard (browser) ◄── WebSocket ──► Dart bridge
 | **This package** (`pulseflow_flutter`) | In-app probes + service extensions |
 | **Dart bridge** | Proxies the browser to the Dart VM Service (browsers cannot open arbitrary `ws://` targets reliably) |
 | **Dashboard** | Problems-first UI: ranked issues, frames, CPU, memory, network, report |
+| **MCP server** (optional) | Lets your coding agent read the live session directly (Cursor / Claude / Command Code) |
 
-You need all three for the full experience.
+You need the first three for the full experience; the MCP server is optional and
+lives in the PulseFlow repo.
 
 ---
 
@@ -296,6 +298,44 @@ Profile is still the right mode for CPU flamegraphs and more realistic frames.
 7. Fix → Record again → compare on **Report** / **History**.
 
 Optional CI: the PulseFlow repo ships `pulseflow_check` (budget gate on P95 build / jank).
+
+---
+
+## Use it from your coding agent (MCP)
+
+The PulseFlow repo also ships a **local stdio MCP server** so an agent (Cursor,
+Claude, Command Code) can read the live session and find, fix, and verify problems
+without copy-pasting reports. It reuses the dashboard's exact problem ranking and
+health score, so what the agent sees matches the **Problems** page.
+
+Start the bridge (`make run`) as usual, then register the server.
+
+**Cursor** — add `.cursor/mcp.json` in the PulseFlow checkout:
+
+```json
+{
+  "mcpServers": {
+    "pulseflow": {
+      "type": "stdio",
+      "command": "bash",
+      "args": ["${workspaceFolder}/docs/pulseflow/mcp/run.sh"]
+    }
+  }
+}
+```
+
+**Command Code** — `cmd mcp add --scope project pulseflow -- bash "$PWD/docs/pulseflow/mcp/run.sh"`.
+Claude and Cursor use the same `mcpServers` shape; just point the command at an
+absolute `docs/pulseflow/mcp/run.sh`.
+
+Tools: session `pulseflow_status`, `pulseflow_discover`, `pulseflow_connect`,
+`pulseflow_disconnect`; findings `pulseflow_report`, `pulseflow_problems`,
+`pulseflow_widgets`, `pulseflow_frames`, `pulseflow_cpu`, `pulseflow_memory`,
+`pulseflow_network`, `pulseflow_device`, `pulseflow_errors`, `pulseflow_logs`;
+controls `pulseflow_debug_option`, `pulseflow_hot_widgets`.
+
+Typical loop: `pulseflow_connect` (or `{"mock": true}` for a device-free demo) →
+`pulseflow_report` → fix the code → re-measure.
 
 ---
 

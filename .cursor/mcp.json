@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "pulseflow": {
+      "type": "stdio",
+      "command": "bash",
+      "args": ["${workspaceFolder}/docs/pulseflow/mcp/run.sh"],
+      "env": {
+        "PULSEFLOW_BRIDGE_URL": "ws://127.0.0.1:3847/bridge"
+      }
+    }
+  }
+}
