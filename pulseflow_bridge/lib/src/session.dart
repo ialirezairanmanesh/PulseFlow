@@ -1183,6 +1183,13 @@ class BridgeSession {
         _hotWidgetsFrozen = false;
         _recordQuietUntil = DateTime.now().millisecondsSinceEpoch + 2500;
         _sendClearedHotWidgets('Recording — counters cleared, waiting for new samples…');
+        // Unfreeze the app probe too — a reset must resume recording even on
+        // older package builds whose reset() did not clear the frozen flag.
+        if (_extensionMethods.contains('ext.pulseflow.setWidgetProbeFrozen')) {
+          try {
+            await _callExtension('ext.pulseflow.setWidgetProbeFrozen', args: <String, dynamic>{'frozen': 'false'});
+          } catch (_) {}
+        }
         if (_extensionMethods.contains('ext.pulseflow.resetWidgetProbe')) {
           await _callExtension('ext.pulseflow.resetWidgetProbe');
         } else if (_extensionMethods.contains('ext.pulseflow.stopWidgetProbe')) {

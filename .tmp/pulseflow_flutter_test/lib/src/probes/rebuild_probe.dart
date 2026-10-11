@@ -217,6 +217,9 @@ class RebuildProbe {
   }
 
   void reset() {
+    // Unfreeze too: a reset means "start a clean measurement", so recording must
+    // resume. Leaving `frozen` set made the probe look dead after Record.
+    frozen = false;
     entries.clear();
     _frameNodes.clear();
     _roots.clear();

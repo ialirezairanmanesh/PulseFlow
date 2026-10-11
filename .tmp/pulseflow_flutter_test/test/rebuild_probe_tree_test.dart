@@ -52,4 +52,17 @@ void main() {
     // Primary widgets list is the mounted tree when present.
     expect((snap['widgets']! as List<Object?>).length, tree.length);
   });
+
+  test('reset clears the freeze flag so recording resumes', () {
+    final RebuildProbe probe = RebuildProbe.instance;
+    probe.start();
+    probe.setFrozen(true);
+    expect(probe.frozen, isTrue);
+
+    probe.reset();
+
+    expect(probe.active, isTrue, reason: 'reset must not stop the probe');
+    expect(probe.frozen, isFalse, reason: 'a frozen probe looks dead after Record');
+    probe.stop();
+  });
 }
