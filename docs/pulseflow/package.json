@@ -12,9 +12,11 @@
     "start": "concurrently -k -n bridge,web,mirror -c teal,cyan,magenta \"npm run bridge\" \"next start -p 3846 -H 0.0.0.0\" \"npm run mirror\"",
     "lint": "eslint",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "mcp": "tsx mcp/server.ts"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "@radix-ui/react-label": "^2.1.8",
     "@radix-ui/react-scroll-area": "^1.2.10",
     "@radix-ui/react-separator": "^1.1.8",

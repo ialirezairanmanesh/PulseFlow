@@ -275,3 +275,42 @@ and source locations rely on debug-only framework hooks (`debugOnRebuildDirtyWid
 banner and the agent report's "Coverage / missing data" section explains the gap. Use **Debug** to
 find *what* to fix (rebuild causes, sources, overflow) and **Profile** to measure the real cost
 (frame timings, CPU). Frame timing, CPU profiling, errors, and image data work in profile.
+
+## MCP server (let your coding agent read the session)
+
+`mcp/server.ts` is a local **stdio MCP server** that connects to the same bridge the dashboard
+uses, so an agent (Command Code / Claude / Cursor) can find, fix, and verify problems without
+copy-pasting reports. It reuses the dashboard's exact `buildProblems` / `computeVerdict` /
+`buildAgentReportMarkdown` logic, so rankings and the health score never drift.
+
+**Run it** (bridge must be up — `make run` starts it on 3847):
+
+```bash
+npm run mcp          # from docs/pulseflow
+```
+
+**Register with Command Code** (project scope, writes `.mcp.json`):
+
+```bash
+cmd mcp add --scope project pulseflow -- bash "$PWD/mcp/run.sh"
+```
+
+A ready-made `.mcp.json` also lives at the repo root. For Claude/Cursor, the equivalent is:
+
+```json
+{ "mcpServers": { "pulseflow": { "command": "bash",
+  "args": ["/abs/path/docs/pulseflow/mcp/run.sh"] } } }
+```
+
+**Tools** — session: `pulseflow_status`, `pulseflow_discover`, `pulseflow_connect`,
+`pulseflow_disconnect`. Findings: `pulseflow_report` (agent-ready brief), `pulseflow_problems`
+(ranked + fixes), `pulseflow_widgets`, `pulseflow_frames`, `pulseflow_cpu`, `pulseflow_memory`,
+`pulseflow_network`, `pulseflow_device`, `pulseflow_errors`, `pulseflow_logs`. Controls:
+`pulseflow_debug_option`, `pulseflow_hot_widgets`.
+
+**Env**: `PULSEFLOW_BRIDGE_URL` (default `ws://127.0.0.1:3847/bridge`), `PULSEFLOW_VM_URL`
+(optional — auto-connect to this VM Service URL at startup).
+
+Typical loop: `pulseflow_connect` (or `{"mock":true}` for a device-free demo) → `pulseflow_report`
+→ fix the code → re-measure → compare.
+

@@ -1,0 +1,489 @@
+/**
+ * Declarative MCP tool registry for PulseFlow.
+ *
+ * Pure of Node/browser APIs: handlers receive a {@link ToolContext} whose
+ * `send`/`waitFor`/`writeFile`/`log` are provided by the server, so the whole
+ * registry is unit-testable with a fake bridge.
+ */
+import type {
+  BridgeClientMessage,
+  BridgeServerMessage,
+  DebugOptionId,
+  PerformanceProblem,
+} from "@/lib/types";
+import {
+  hasTelemetry,
+  problemsOf,
+  reportJsonOf,
+  reportMarkdownOf,
+  sessionStatsOf,
+  type McpSessionState,
+} from "@/lib/mcp/session-state";
+
+export interface ToolTextContent {
+  type: "text";
+  text: string;
+}
+
+export interface ToolResult {
+  content: ToolTextContent[];
+  isError?: boolean;
+}
+
+export interface ToolContext {
+  state: McpSessionState;
+  send(msg: BridgeClientMessage): void;
+  waitFor(
+    type: BridgeServerMessage["type"],
+    timeoutMs?: number,
+  ): Promise<BridgeServerMessage | null>;
+  /** Writes a file under the OS temp dir and returns its absolute path. */
+  writeFile(fileName: string, content: string): string;
+  log(message: string): void;
+}
+
+export interface ToolDef {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  handler: (ctx: ToolContext, args: Record<string, unknown>) => Promise<ToolResult> | ToolResult;
+}
+
+const NO_ARGS: Record<string, unknown> = { type: "object", properties: {}, additionalProperties: false };
+
+function json(value: unknown): ToolResult {
+  return { content: [{ type: "text", text: JSON.stringify(value, null, 2) }] };
+}
+
+function text(value: string, isError = false): ToolResult {
+  return { content: [{ type: "text", text: value }], isError };
+}
+
+function numArg(args: Record<string, unknown>, key: string, fallback: number): number {
+  const raw = args[key];
+  const n = typeof raw === "number" ? raw : Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+}
+
+function problemLine(p: PerformanceProblem): string {
+  const where = [
+    p.widget ? `\`${p.widget}\`` : "",
+    p.route ? `on ${p.route}` : "",
+    p.sourceUri ? `${p.sourceUri}${p.sourceLine ? `:${p.sourceLine}` : ""}` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const evidence = [
+    p.impact != null ? `impact ${p.impact}` : "",
+    p.ratePerSec != null && p.kind !== "slow_http" ? `${p.ratePerSec.toFixed(1)}/s` : "",
+    p.share != null ? `${p.share.toFixed(1)}% share` : "",
+    p.latencyMs != null ? `${p.latencyMs.toFixed(0)} ms` : "",
+    p.duringJank ? "during jank" : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+  return [
+    `- [${p.severity.toUpperCase()}] ${p.title}${where ? ` — ${where}` : ""}`,
+    p.why ? `  why: ${p.why}` : "",
+    `  fix: ${p.action}`,
+    evidence ? `  evidence: ${evidence}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function problemsMarkdown(problems: PerformanceProblem[]): string {
+  if (!problems.length) return "_No ranked problems in this session._";
+  return problems.map(problemLine).join("\n\n");
+}
+
+/** Best-effort target for `connect` when no url is given. */
+async function discoverAndConnect(ctx: ToolContext): Promise<string> {
+  ctx.send({ type: "discover" });
+  const found = await ctx.waitFor("discover", 10_000);
+  if (!found || found.type !== "discover") {
+    return "Discover timed out — is the PulseFlow bridge running on port 3847?";
+  }
+  const app = found.apps.find((a) => a.connectable) ?? found.apps[0];
+  if (!app) {
+    return "No running Flutter apps discovered. Start the app (e.g. on redroid) and retry.";
+  }
+  ctx.send({ type: "connect", url: app.wsUrl });
+  await ctx.waitFor("status", 8_000);
+  return `Connecting to ${app.name ?? app.deviceSerial ?? app.wsUrl} (${app.wsUrl})…`;
+}
+
+export const TOOLS: ToolDef[] = [
+  {
+    name: "pulseflow_status",
+    description:
+      "PulseFlow bridge + session status: whether the bridge is reachable, the connection state, live/mock mode, isolate, VM capabilities, build mode, and a one-line health verdict. Call this first to know whether you need pulseflow_connect.",
+    inputSchema: NO_ARGS,
+    handler: (ctx) => {
+      const s = ctx.state;
+      const problems = problemsOf(s);
+      return json({
+        bridgeReady: s.bridgeReady,
+        status: s.status,
+        statusMessage: s.statusMessage,
+        mode: s.mode ?? null,
+        isolateName: s.isolateName ?? null,
+        error: s.error ?? null,
+        buildMode: s.buildInfo?.buildMode ?? null,
+        probes: s.buildInfo?.probes ?? null,
+        capabilities: s.capabilities,
+        hasTelemetry: hasTelemetry(s),
+        messagesSeen: s.messageCount,
+        problems: problems.length,
+      });
+    },
+  },
+  {
+    name: "pulseflow_discover",
+    description:
+      "List running Flutter apps the bridge can connect to (ADB / mDNS / port scan), with their VM Service ws URL and device serial.",
+    inputSchema: NO_ARGS,
+    handler: async (ctx) => {
+      ctx.send({ type: "discover" });
+      const msg = await ctx.waitFor("discover", 10_000);
+      if (!msg || msg.type !== "discover") return text("Discover timed out.", true);
+      return json({ apps: msg.apps });
+    },
+  },
+  {
+    name: "pulseflow_connect",
+    description:
+      "Connect the bridge to a Flutter app's VM Service. Provide `url` (ws://…/ws), or `serial` (ADB serial like localhost:5555) to connect via ADB, or `mock:true` for a device-free demo session. With no arguments it discovers and connects to the first running app.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "VM Service WebSocket URL, e.g. ws://127.0.0.1:8181/ws" },
+        serial: { type: "string", description: "ADB serial, e.g. localhost:5555" },
+        mock: { type: "boolean", description: "Start a device-free mock session" },
+      },
+      additionalProperties: false,
+    },
+    handler: async (ctx, args) => {
+      if (args.mock === true) {
+        ctx.send({ type: "mock" });
+        await ctx.waitFor("status", 5_000);
+        return text("Started a mock (demo) session. Call pulseflow_report next.");
+      }
+      if (typeof args.url === "string" && args.url.trim()) {
+        const url = args.url.trim();
+        ctx.send({ type: "connect", url });
+        const status = await ctx.waitFor("status", 8_000);
+        return json({ connecting: url, status: status?.type === "status" ? status.status : "sent" });
+      }
+      if (typeof args.serial === "string" && args.serial.trim()) {
+        const serial = args.serial.trim();
+        ctx.send({ type: "discover" });
+        const found = await ctx.waitFor("discover", 10_000);
+        const app = found && found.type === "discover"
+          ? found.apps.find((a) => a.deviceSerial === serial) ??
+            found.apps.find((a) => a.wsUrl.includes(serial))
+          : undefined;
+        if (!app) return text(`No discovered app with ADB serial "${serial}".`, true);
+        ctx.send({ type: "connect", url: app.wsUrl });
+        await ctx.waitFor("status", 8_000);
+        return text(`Connecting to ${app.name ?? serial} (${app.wsUrl})…`);
+      }
+      return text(await discoverAndConnect(ctx));
+    },
+  },
+  {
+    name: "pulseflow_disconnect",
+    description: "Disconnect the bridge from the current app and clear telemetry.",
+    inputSchema: NO_ARGS,
+    handler: (ctx) => {
+      ctx.send({ type: "disconnect" });
+      return text("Disconnected.");
+    },
+  },
+  {
+    name: "pulseflow_report",
+    description:
+      "The full agent-ready brief for the current session — ranked problems with impact/severity/why/fix/evidence, coverage gaps, rebuild roots, errors, CPU hotspots, memory growth, slow HTTP, and top rebuilding widgets. This is the same output as the dashboard's 'Copy agent report'. Use it to find what to fix.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        format: { type: "string", enum: ["markdown", "json"], description: "Output format (default markdown)" },
+        write: { type: "boolean", description: "Also write the report to a temp file and return its path" },
+      },
+      additionalProperties: false,
+    },
+    handler: (ctx, args) => {
+      const format = args.format === "json" ? "json" : "markdown";
+      const content =
+        format === "json" ? JSON.stringify(reportJsonOf(ctx.state), null, 2) : reportMarkdownOf(ctx.state);
+      let suffix = "";
+      if (args.write === true) {
+        const ext = format === "json" ? "json" : "md";
+        const path = ctx.writeFile(`pulseflow-report-${Date.now()}.${ext}`, content);
+        suffix = `\n\n_Saved to ${path}_`;
+      }
+      return text(content + suffix);
+    },
+  },
+  {
+    name: "pulseflow_problems",
+    description:
+      "Ranked performance problems for the current session (highest impact first), each with severity, the measured evidence, a plain-language cause, and a concrete fix. Backed by the same ranking the dashboard and CI check use.",
+    inputSchema: {
+      type: "object",
+      properties: { limit: { type: "number", description: "Max problems to return (default 12)" } },
+      additionalProperties: false,
+    },
+    handler: (ctx, args) => {
+      const limit = numArg(args, "limit", 12);
+      const problems = problemsOf(ctx.state).slice(0, limit);
+      const stats = sessionStatsOf(ctx.state);
+      return text(
+        [
+          `# PulseFlow problems (${problems.length})`,
+          `P95 build ${stats.p95BuildMs} ms · raster ${stats.p95RasterMs} ms · jank ${(stats.jankRatio * 100).toFixed(0)}%`,
+          "",
+          problemsMarkdown(problems),
+        ].join("\n"),
+      );
+    },
+  },
+  {
+    name: "pulseflow_widgets",
+    description:
+      "Hottest rebuilding widgets for the current route/window — name, route, rebuilds/s, share %, source file:line, and rebuild root cause — plus per-screen totals and rebuild roots.",
+    inputSchema: {
+      type: "object",
+      properties: { limit: { type: "number", description: "Max widgets (default 12)" } },
+      additionalProperties: false,
+    },
+    handler: (ctx, args) => {
+      const limit = numArg(args, "limit", 12);
+      const s = ctx.state;
+      if (!s.hot) {
+        return json({ available: false, message: s.hotMessage ?? "No widget data yet — interact with the app.", widgets: [], screens: [], roots: [] });
+      }
+      const widgets = [...(s.hot.widgets ?? [])]
+        .sort((a, b) => b.ratePerSec - a.ratePerSec)
+        .slice(0, limit)
+        .map((w) => ({
+          name: w.name,
+          route: w.route,
+          ratePerSec: w.ratePerSec,
+          share: w.share,
+          source: w.sourceUri ? `${w.sourceUri}${w.sourceLine ? `:${w.sourceLine}` : ""}` : undefined,
+          cause: w.cause,
+          isFramework: w.isFramework,
+          duringJank: w.duringJank,
+        }));
+      return json({
+        available: s.hot.available,
+        windowMs: s.hot.windowMs,
+        currentRoute: s.hot.currentRoute ?? null,
+        widgets,
+        screens: (s.hot.screens ?? []).slice(0, 8),
+        roots: s.rebuildCauses?.roots?.slice(0, 10) ?? [],
+      });
+    },
+  },
+  {
+    name: "pulseflow_frames",
+    description:
+      "Frame-budget health: P95 build/raster vs the device frame budget, jank ratio, latest frame, and UI stalls (main-isolate freezes).",
+    inputSchema: NO_ARGS,
+    handler: (ctx) => {
+      const s = ctx.state;
+      const latest = s.points.at(-1);
+      const stats = sessionStatsOf(s);
+      return json({
+        samples: s.points.length,
+        p95BuildMs: stats.p95BuildMs,
+        p95RasterMs: stats.p95RasterMs,
+        p95FrameMs: stats.p95FrameMs,
+        jankRatio: stats.jankRatio,
+        refreshRate: latest?.refreshRate ?? null,
+        budgetMs: latest?.buildBudgetMs ?? null,
+        stalls: s.stalls,
+      });
+    },
+  },
+  {
+    name: "pulseflow_cpu",
+    description:
+      "CPU hotspots by self-time. Optionally pass `recordMs` to record a fresh profile first (the app must run in profile mode). Returns top functions with self/total %.",
+    inputSchema: {
+      type: "object",
+      properties: { recordMs: { type: "number", description: "Record for this many ms before returning (e.g. 4000)" } },
+      additionalProperties: false,
+    },
+    handler: async (ctx, args) => {
+      const recordMs = numArg(args, "recordMs", 0);
+      if (recordMs > 0) {
+        ctx.send({ type: "cpuRecord", action: "start", durationMs: recordMs });
+        await ctx.waitFor("cpuProfile", recordMs + 8_000);
+      }
+      const profile = ctx.state.cpuProfile;
+      if (!profile) {
+        return json({ available: false, message: ctx.state.cpuMessage ?? "No CPU profile captured." });
+      }
+      return json({
+        available: true,
+        durationMs: profile.durationMs,
+        sampleCount: profile.sampleCount,
+        hotspots: profile.topFunctions.slice(0, 12).map((f) => ({
+          name: f.qualifiedName,
+          selfPercent: f.selfPercent,
+          totalPercent: f.totalPercent,
+          codeUri: f.codeUri,
+        })),
+      });
+    },
+  },
+  {
+    name: "pulseflow_memory",
+    description:
+      "Memory picture: heap growth between snapshots, leaks (created-but-not-disposed objects), and image-cache waste. `action`: 'auto' (current), 'capture' (take a snapshot), 'diff' (capture second + diff), 'leaks' (run a leak report).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        action: { type: "string", enum: ["auto", "capture", "diff", "leaks"], description: "Default auto" },
+      },
+      additionalProperties: false,
+    },
+    handler: async (ctx, args) => {
+      const action = typeof args.action === "string" ? args.action : "auto";
+      if (action === "capture" || action === "diff") {
+        ctx.send({ type: "memorySnapshot", action: "capture" });
+        await ctx.waitFor("memoryProfile", 10_000);
+        if (action === "diff") {
+          ctx.send({ type: "memorySnapshot", action: "diff" });
+          await ctx.waitFor("memoryProfile", 10_000);
+        }
+      } else if (action === "leaks") {
+        ctx.send({ type: "leakControl", action: "report" });
+        await ctx.waitFor("leaks", 10_000);
+      }
+      const s = ctx.state;
+      return json({
+        snapshots: s.memorySnapshots.map((m) => ({ id: m.id, heapMb: m.heapMb, externalMb: m.externalMb })),
+        grew: s.memoryDiff?.grew?.slice(0, 12) ?? [],
+        leaks: s.leaks.slice(0, 12),
+        imageCache: s.images?.cache ?? null,
+        oversizedImages: s.images?.oversized?.slice(0, 12) ?? [],
+        message: s.memoryMessage ?? null,
+      });
+    },
+  },
+  {
+    name: "pulseflow_network",
+    description:
+      "Network picture: slowest HTTP requests by latency (UX wait time — not frame cost), plus open sockets.",
+    inputSchema: {
+      type: "object",
+      properties: { limit: { type: "number", description: "Max requests (default 10)" } },
+      additionalProperties: false,
+    },
+    handler: (ctx, args) => {
+      const limit = numArg(args, "limit", 10);
+      const s = ctx.state;
+      const slow = [...s.network].sort((a, b) => b.latencyMs - a.latencyMs).slice(0, limit);
+      return json({
+        available: s.networkAvailable,
+        requests: slow,
+        sockets: s.sockets.slice(0, 20),
+        message: s.networkMessage ?? null,
+      });
+    },
+  },
+  {
+    name: "pulseflow_device",
+    description:
+      "Device context: platform, build mode, display refresh rate + frame budget, DPR, physical size, locale, text scale, and app package.",
+    inputSchema: NO_ARGS,
+    handler: (ctx) => json(ctx.state.deviceContext ?? { available: false, message: "Device context unavailable." }),
+  },
+  {
+    name: "pulseflow_errors",
+    description: "Runtime errors captured this session: overflow, assertions, and exceptions, with counts and routes.",
+    inputSchema: NO_ARGS,
+    handler: (ctx) => json({ errors: ctx.state.appErrors }),
+  },
+  {
+    name: "pulseflow_logs",
+    description:
+      "Recent runtime log stream (VM Service Logging channel). Filter by minimum `level` (debug|info|warning|error|severe).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        limit: { type: "number", description: "Max entries, newest last (default 100)" },
+        level: { type: "string", enum: ["debug", "info", "warning", "error", "severe"] },
+      },
+      additionalProperties: false,
+    },
+    handler: (ctx, args) => {
+      const limit = numArg(args, "limit", 100);
+      const order = { debug: 0, info: 1, warning: 2, error: 3, severe: 4 } as const;
+      const min = typeof args.level === "string" && args.level in order ? order[args.level as keyof typeof order] : 0;
+      const logs = ctx.state.logs.filter((l) => (order[l.level] ?? 0) >= min).slice(-limit);
+      return json({ count: logs.length, logs });
+    },
+  },
+  {
+    name: "pulseflow_debug_option",
+    description:
+      "Read or toggle a Flutter debug overlay (same as DevTools Inspector): performanceOverlay, debugPaint, debugPaintBaselines, repaintRainbow, invertOversizedImages, debugBanner, slowAnimations.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        id: {
+          type: "string",
+          enum: [
+            "performanceOverlay",
+            "debugPaint",
+            "debugPaintBaselines",
+            "repaintRainbow",
+            "invertOversizedImages",
+            "debugBanner",
+            "slowAnimations",
+          ],
+        },
+        enabled: { type: "boolean", description: "Omit to just read the current state" },
+      },
+      additionalProperties: false,
+    },
+    handler: async (ctx, args) => {
+      const id = typeof args.id === "string" ? args.id : undefined;
+      if (!id) return json({ options: ctx.state.debugOptions });
+      if (typeof args.enabled === "boolean") {
+        ctx.send({ type: "debugOptions", action: "set", id: id as DebugOptionId, enabled: args.enabled });
+        await ctx.waitFor("debugOptions", 5_000);
+      }
+      return json({ options: ctx.state.debugOptions });
+    },
+  },
+  {
+    name: "pulseflow_hot_widgets",
+    description:
+      "'freeze' holds the widget rebuild ranks still while you inspect; 'unfreeze' resumes live sampling; 'reset' clears the counters to start a clean measurement.",
+    inputSchema: {
+      type: "object",
+      properties: { action: { type: "string", enum: ["freeze", "unfreeze", "reset"] } },
+      required: ["action"],
+      additionalProperties: false,
+    },
+    handler: (ctx, args) => {
+      const action = args.action;
+      if (action !== "freeze" && action !== "unfreeze" && action !== "reset") {
+        return text("action must be freeze, unfreeze, or reset", true);
+      }
+      ctx.send({ type: "hotWidgetsControl", action });
+      return text(`Widget ranks: ${action}.`);
+    },
+  },
+];
+
+export const TOOL_NAMES = TOOLS.map((t) => t.name);
+
+export function findTool(name: string): ToolDef | undefined {
+  return TOOLS.find((t) => t.name === name);
+}

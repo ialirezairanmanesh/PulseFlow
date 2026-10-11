@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "pulseflow": {
+      "transport": "stdio",
+      "enabled": true,
+      "command": "bash",
+      "args": ["/home/alireza/flutter_project/self/docs/pulseflow/mcp/run.sh"],
+      "env": {
+        "PULSEFLOW_BRIDGE_URL": "ws://127.0.0.1:3847/bridge"
+      }
+    }
+  }
+}
