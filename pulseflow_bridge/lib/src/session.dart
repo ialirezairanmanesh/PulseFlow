@@ -1112,6 +1112,8 @@ class BridgeSession {
       if (raw['parentId'] != null) 'parentId': '${raw['parentId']}',
       if (raw['depth'] != null) 'depth': (raw['depth'] as num).toInt(),
       if (raw['inTree'] != null) 'inTree': raw['inTree'] == true,
+      if (raw['childProvided'] == true) 'childProvided': true,
+      if (raw['childReused'] != null) 'childReused': raw['childReused'] == true,
     };
   }
 

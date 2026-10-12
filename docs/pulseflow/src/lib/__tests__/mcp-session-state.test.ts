@@ -330,6 +330,32 @@ describe("tool registry", () => {
     expect(sent).toHaveLength(0);
   });
 
+  it("pulseflow_widgets lists builders that rebuild their child", async () => {
+    const state = scripted();
+    state.hot = {
+      ...state.hot!,
+      widgets: [
+        ...state.hot!.widgets,
+        {
+          id: "vlb",
+          name: "ValueListenableBuilder<int>",
+          route: "/invoices",
+          rebuildsSession: 10,
+          rebuildsWindow: 10,
+          ratePerSec: 5,
+          share: 10,
+          lastSeenMs: 0,
+          childProvided: true,
+          childReused: false,
+        },
+      ],
+    };
+    const { ctx } = fakeContext(state);
+    const res = await findTool("pulseflow_widgets")!.handler(ctx, {});
+    const payload = JSON.parse(res.content[0].text);
+    expect(payload.builderChildRebuilt[0].name).toContain("ValueListenableBuilder");
+  });
+
   it("pulseflow_cpu records and waits for the finished profile", async () => {
     const state = scripted();
     const sent: unknown[] = [];

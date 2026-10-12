@@ -396,12 +396,19 @@ export const TOOLS: ToolDef[] = [
           cause: w.cause,
           isFramework: w.isFramework,
           duringJank: w.duringJank,
+          childProvided: w.childProvided,
+          childReused: w.childReused,
         }));
+      const builderChildRebuilt = (s.hot.widgets ?? [])
+        .filter((w) => w.childProvided && w.childReused === false)
+        .slice(0, 8)
+        .map((w) => ({ name: w.name, route: w.route, ratePerSec: w.ratePerSec }));
       return json({
         available: s.hot.available,
         windowMs: s.hot.windowMs,
         currentRoute: s.hot.currentRoute ?? null,
         widgets,
+        builderChildRebuilt,
         screens: (s.hot.screens ?? []).slice(0, 8),
         roots: s.rebuildCauses?.roots?.slice(0, 10) ?? [],
       });

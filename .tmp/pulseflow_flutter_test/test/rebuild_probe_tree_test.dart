@@ -65,4 +65,70 @@ void main() {
     expect(probe.frozen, isFalse, reason: 'a frozen probe looks dead after Record');
     probe.stop();
   });
+
+  WidgetEntry? findEntry(String name) {
+    for (final WidgetEntry e in RebuildProbe.instance.entries.values) {
+      if (e.name == name || e.name.startsWith('$name<')) return e;
+    }
+    return null;
+  }
+
+  testWidgets('flags a builder that reuses its child', (WidgetTester tester) async {
+    final ValueNotifier<int> notifier = ValueNotifier<int>(0);
+    addTearDown(notifier.dispose);
+
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: ValueListenableBuilder<int>(
+          valueListenable: notifier,
+          child: const SizedBox(width: 1, height: 1),
+          builder: (BuildContext context, int value, Widget? child) {
+            return Stack(
+              textDirection: TextDirection.ltr,
+              children: <Widget>[
+                child!,
+                Text('$value', textDirection: TextDirection.ltr),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+
+    RebuildProbe.instance.start();
+    notifier.value = 1;
+    await tester.pump();
+
+    final WidgetEntry? entry = findEntry('ValueListenableBuilder');
+    expect(entry, isNotNull, reason: 'the builder did not rebuild under the probe');
+    expect(entry!.childProvided, isTrue);
+    expect(entry.childReused, isTrue);
+  });
+
+  testWidgets('flags a builder that ignores its child', (WidgetTester tester) async {
+    final ValueNotifier<int> notifier = ValueNotifier<int>(0);
+    addTearDown(notifier.dispose);
+
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: ValueListenableBuilder<int>(
+          valueListenable: notifier,
+          child: const SizedBox(width: 1, height: 1),
+          builder: (BuildContext context, int value, Widget? child) =>
+              Text('$value', textDirection: TextDirection.ltr),
+        ),
+      ),
+    );
+
+    RebuildProbe.instance.start();
+    notifier.value = 1;
+    await tester.pump();
+
+    final WidgetEntry? entry = findEntry('ValueListenableBuilder');
+    expect(entry, isNotNull, reason: 'the builder did not rebuild under the probe');
+    expect(entry!.childProvided, isTrue);
+    expect(entry.childReused, isFalse);
+  });
 }

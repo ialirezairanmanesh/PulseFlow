@@ -59,6 +59,8 @@ export function normalizeHotWidgetsMessage(
       parentId: anyW.parentId,
       depth: anyW.depth,
       inTree: anyW.inTree,
+      childProvided: anyW.childProvided,
+      childReused: anyW.childReused,
     };
   });
 
@@ -91,6 +93,8 @@ export function normalizeHotWidgetsMessage(
           parentId: anyW.parentId,
           depth: anyW.depth ?? 0,
           inTree: anyW.inTree ?? true,
+          childProvided: anyW.childProvided,
+          childReused: anyW.childReused,
         };
       })
     : undefined;

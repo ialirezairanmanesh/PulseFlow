@@ -286,8 +286,14 @@ export function buildAgentReportMarkdown(input: AgentReportInput): string {
   if (input.hot?.widgets?.length) {
     lines.push("## Top rebuilding widgets", "");
     for (const w of input.hot.widgets.slice(0, 10)) {
+      const childNote =
+        w.childProvided && w.childReused === false
+          ? " · **rebuilds its `child`** — pass it via `child:` so it is skipped"
+          : "";
       lines.push(
-        `- \`${w.name}\` on ${w.route} — ${w.ratePerSec}/s (${w.share}% share)${w.isFramework ? " [framework]" : ""}`,
+        `- \`${w.name}\` on ${w.route} — ${w.ratePerSec}/s (${w.share}% share)${
+          w.isFramework ? " [framework]" : ""
+        }${childNote}`,
       );
     }
     lines.push("");

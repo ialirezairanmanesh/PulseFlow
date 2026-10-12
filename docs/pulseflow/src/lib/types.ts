@@ -111,6 +111,10 @@ export interface WidgetRebuildStat {
   depth?: number;
   /** True when the widget is currently mounted in the element tree. */
   inTree?: boolean;
+  /** Builder (`AnimatedBuilder` et al.) that received a reusable `child`. */
+  childProvided?: boolean;
+  /** Whether that `child` was reused: true = good, false = the builder rebuilt it. */
+  childReused?: boolean;
 }
 
 export interface ScreenRebuildStat {

@@ -147,6 +147,35 @@ describe("actionable agent prompt", () => {
     expect(md).toContain("cause: InvoiceListState");
     expect(md).toContain("/abs/card.dart:42");
   });
+
+  it("flags builders that rebuild their reusable child", () => {
+    const md = buildAgentReportMarkdown({
+      ...input,
+      hot: {
+        available: true,
+        windowMs: 10000,
+        totalRebuildsWindow: 50,
+        totalRebuildsSession: 50,
+        screens: [],
+        widgets: [
+          {
+            id: "x",
+            name: "ValueListenableBuilder<int>",
+            route: "/invoices",
+            rebuildsSession: 40,
+            rebuildsWindow: 40,
+            ratePerSec: 20,
+            share: 40,
+            lastSeenMs: 0,
+            childProvided: true,
+            childReused: false,
+          },
+        ],
+      },
+    });
+    expect(md).toContain("rebuilds its `child`");
+    expect(md).toContain("ValueListenableBuilder<int>");
+  });
 });
 
 describe("buildAgentReportJson", () => {

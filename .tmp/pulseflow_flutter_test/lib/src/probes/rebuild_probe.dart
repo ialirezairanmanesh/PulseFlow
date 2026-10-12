@@ -129,6 +129,15 @@ class WidgetEntry {
   int session = 0;
   final List<DateTime> hits = <DateTime>[];
   DateTime lastSeen = DateTime.now();
+
+  /// True when this widget is a builder (`AnimatedBuilder` et al.) that received
+  /// a reusable `child`.
+  bool childProvided = false;
+
+  /// Whether that `child` was actually reused across a rebuild: `true` = good
+  /// (the child subtree did not rebuild), `false` = the builder rebuilt its
+  /// child (the optimization was defeated), `null` = not a builder with `child`.
+  bool? childReused;
 }
 
 class _FrameNode {
@@ -299,6 +308,7 @@ class RebuildProbe {
       for (var i = 0; i < elements.length; i++) {
         index[elements[i]] = i;
       }
+      _analyzeBuilderChildren(elements);
       final List<RebuildNode> input = <RebuildNode>[];
       for (var i = 0; i < elements.length; i++) {
         final Element element = elements[i];
@@ -353,6 +363,67 @@ class RebuildProbe {
       }
     } finally {
       _frameNodes.clear();
+    }
+  }
+
+  /// The reusable `child` of a builder widget, or null when it has none.
+  static Widget? _builderChild(Widget widget) {
+    if (widget is AnimatedBuilder) return widget.child;
+    if (widget is ListenableBuilder) return widget.child;
+    if (widget is ValueListenableBuilder) return widget.child;
+    return null;
+  }
+
+  /// Builder widgets that accept a reusable `child`. Names may carry a type
+  /// argument (`ValueListenableBuilder<int>`), so compare the base name.
+  static bool _isReusableChildBuilder(String name) {
+    final String base = name.contains('<') ? name.split('<').first : name;
+    return base == 'AnimatedBuilder' ||
+        base == 'ListenableBuilder' ||
+        base == 'ValueListenableBuilder';
+  }
+
+  /// For each builder that rebuilt this frame, record whether its `child` was
+  /// reused. A reused `child` produces the same Element and is not rebuilt, so
+  /// it is absent from the frame's dirty set; that is the whole point of the
+  /// `child` parameter.
+  void _analyzeBuilderChildren(List<Element> elements) {
+    final Set<Element> dirty = Set<Element>.identity();
+    for (final Element element in elements) {
+      dirty.add(element);
+    }
+    for (final Element element in elements) {
+      final String name = element.widget.runtimeType.toString();
+      if (!_isReusableChildBuilder(name)) continue;
+      final String route = resolveRouteLabel(element);
+      final String? keyLabel = _keyLabel(element.widget.key);
+      final WidgetEntry? entry = entries['$route|$name|${keyLabel ?? ''}'];
+      if (entry == null) continue;
+
+      final Widget? child = _builderChild(element.widget);
+      entry.childProvided = child != null;
+      if (child == null) {
+        entry.childReused = null;
+        continue;
+      }
+      Element? childElement;
+      void find(Element e, int depth) {
+        if (childElement != null || depth > 8) return;
+        if (identical(e.widget, child)) {
+          childElement = e;
+          return;
+        }
+        e.visitChildren((Element c) => find(c, depth + 1));
+      }
+
+      element.visitChildren((Element c) => find(c, 1));
+      if (childElement == null) {
+        // The child was passed but never placed in the tree — the builder
+        // ignores it, so every rebuild recreates the subtree.
+        entry.childReused = false;
+      } else {
+        entry.childReused = !dirty.contains(childElement);
+      }
     }
   }
 
@@ -471,6 +542,8 @@ class RebuildProbe {
           'inTree': true,
           if (entry?.sourceFile != null) 'sourceUri': entry!.sourceFile,
           if (entry?.sourceLine != null) 'sourceLine': entry!.sourceLine,
+          if (entry?.childProvided == true) 'childProvided': true,
+          if (entry?.childReused != null) 'childReused': entry!.childReused,
           'rebuildsSession': session,
           'rebuildsWindow': windowCount,
           'ratePerSec': windowCount > 0
@@ -541,6 +614,8 @@ class RebuildProbe {
         if (entry.keyLabel != null) 'keyLabel': entry.keyLabel,
         if (entry.sourceFile != null) 'sourceUri': entry.sourceFile,
         if (entry.sourceLine != null) 'sourceLine': entry.sourceLine,
+        if (entry.childProvided) 'childProvided': true,
+        if (entry.childReused != null) 'childReused': entry.childReused,
         'rebuildsSession': entry.session,
         'rebuildsWindow': windowCount,
         'ratePerSec': windowCount > 0
