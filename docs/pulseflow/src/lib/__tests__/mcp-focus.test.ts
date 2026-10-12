@@ -3,6 +3,7 @@ import {
   applyMessage,
   createSessionState,
   focusedStateOf,
+  resetTelemetry,
   type McpSessionState,
 } from "@/lib/mcp/session-state";
 import { findTool, type ToolContext } from "@/lib/mcp/tools";
@@ -152,6 +153,45 @@ describe("focus tools", () => {
     expect(sent).toEqual([{ type: "disconnect" }]);
     expect(state.points).toHaveLength(0);
     expect(state.sessionStartT).toBeNull();
+  });
+
+  it("stalls reset stays hidden when the app re-sends its old buffer", () => {
+    const state = sessionWith(3);
+    const oldStalls = [
+      { id: "old-1", durationMs: 900, atMs: 1, route: "/Cold" },
+      { id: "old-2", durationMs: 400, atMs: 2, route: "/Cold" },
+    ];
+    applyMessage(state, { type: "stalls", available: true, total: 2, maxDurationMs: 900, stalls: oldStalls } as BridgeServerMessage);
+    expect(state.stalls?.total).toBe(2);
+
+    resetTelemetry(state);
+    expect(state.stalls).toBeNull();
+
+    // App keeps its buffer and adds one new stall after the reset.
+    applyMessage(state, {
+      type: "stalls",
+      available: true,
+      total: 3,
+      maxDurationMs: 900,
+      stalls: [...oldStalls, { id: "new-1", durationMs: 120, atMs: 5, route: "/MainPage" }],
+    } as BridgeServerMessage);
+
+    expect(state.stalls?.stalls.map((s) => s.id)).toEqual(["new-1"]);
+    expect(state.stalls?.total).toBe(1);
+    expect(state.stalls?.maxDurationMs).toBe(120);
+  });
+
+  it("pulseflow_problems, pulseflow_report and pulseflow_widgets accept focus args", async () => {
+    const { ctx } = ctxFor(sessionWith(100));
+    const problems = await findTool("pulseflow_problems")!.handler(ctx, { excludeFirstSec: 20 });
+    expect(problems.isError).toBeFalsy();
+    expect(problems.content[0].text).toContain("PulseFlow problems");
+
+    const report = await findTool("pulseflow_report")!.handler(ctx, { route: "/MainPage", excludeFirstSec: 20 });
+    expect(report.isError).toBeFalsy();
+
+    const widgets = await findTool("pulseflow_widgets")!.handler(ctx, { route: "/MainPage" });
+    expect(JSON.parse(widgets.content[0].text).available).toBe(false);
   });
 
   it("pulseflow_connect starts a fresh session", async () => {

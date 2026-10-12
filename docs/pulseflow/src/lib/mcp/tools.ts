@@ -310,13 +310,15 @@ export const TOOLS: ToolDef[] = [
       properties: {
         format: { type: "string", enum: ["markdown", "json"], description: "Output format (default markdown)" },
         write: { type: "boolean", description: "Also write the report to a temp file and return its path" },
+        ...FOCUS_PROPERTIES,
       },
       additionalProperties: false,
     },
     handler: (ctx, args) => {
       const format = args.format === "json" ? "json" : "markdown";
+      const { state: focused } = focusedStateOf(ctx.state, focusArgs(args));
       const content =
-        format === "json" ? JSON.stringify(reportJsonOf(ctx.state), null, 2) : reportMarkdownOf(ctx.state);
+        format === "json" ? JSON.stringify(reportJsonOf(focused), null, 2) : reportMarkdownOf(focused);
       let suffix = "";
       if (args.write === true) {
         const ext = format === "json" ? "json" : "md";
@@ -332,13 +334,17 @@ export const TOOLS: ToolDef[] = [
       "Ranked performance problems for the current session (highest impact first), each with severity, the measured evidence, a plain-language cause, and a concrete fix. Backed by the same ranking the dashboard and CI check use.",
     inputSchema: {
       type: "object",
-      properties: { limit: { type: "number", description: "Max problems to return (default 12)" } },
+      properties: {
+        limit: { type: "number", description: "Max problems to return (default 12)" },
+        ...FOCUS_PROPERTIES,
+      },
       additionalProperties: false,
     },
     handler: (ctx, args) => {
       const limit = numArg(args, "limit", 12);
-      const problems = problemsOf(ctx.state).slice(0, limit);
-      const stats = sessionStatsOf(ctx.state);
+      const { state: focused } = focusedStateOf(ctx.state, focusArgs(args));
+      const problems = problemsOf(focused).slice(0, limit);
+      const stats = sessionStatsOf(focused);
       return text(
         [
           `# PulseFlow problems (${problems.length})`,
@@ -401,12 +407,12 @@ export const TOOLS: ToolDef[] = [
       "Hottest rebuilding widgets for the current route/window — name, route, rebuilds/s, share %, source file:line, and rebuild root cause — plus per-screen totals and rebuild roots.",
     inputSchema: {
       type: "object",
-      properties: { limit: { type: "number", description: "Max widgets (default 12)" } },
+      properties: { limit: { type: "number", description: "Max widgets (default 12)" }, ...FOCUS_PROPERTIES },
       additionalProperties: false,
     },
     handler: (ctx, args) => {
       const limit = numArg(args, "limit", 12);
-      const s = ctx.state;
+      const { state: s } = focusedStateOf(ctx.state, focusArgs(args));
       if (!s.hot) {
         return json({ available: false, message: s.hotMessage ?? "No widget data yet — interact with the app.", widgets: [], screens: [], roots: [] });
       }

@@ -130,6 +130,12 @@ export interface McpSessionState {
   buildInfo: BuildInfoSnapshot | null;
   deviceContext: DeviceContextSnapshot | null;
   stalls: StallsSnapshot | null;
+  /**
+   * Stall ids that were already in the app's report when telemetry was reset.
+   * The app keeps its stall buffer across resets and re-sends it on every poll,
+   * so these are filtered out of incoming `stalls` messages.
+   */
+  ignoredStallIds: Set<string>;
   logs: LogMessage[];
   debugOptions: DebugOptionState[];
   debugOptionsMessage?: string;
@@ -173,6 +179,7 @@ export function createSessionState(): McpSessionState {
     buildInfo: null,
     deviceContext: null,
     stalls: null,
+    ignoredStallIds: new Set<string>(),
     logs: [],
     debugOptions: [],
     lastMessageAt: 0,
@@ -331,16 +338,23 @@ export function applyMessage(state: McpSessionState, msg: BridgeServerMessage): 
         extras: msg.extras,
       };
       break;
-    case "stalls":
+    case "stalls": {
+      const incoming = msg.stalls ?? [];
+      const kept = incoming.filter((s) => !state.ignoredStallIds.has(s.id));
+      const ignored = incoming.length - kept.length;
       state.stalls = {
         available: msg.available,
         active: msg.active,
         thresholdMs: msg.thresholdMs,
-        total: msg.total ?? 0,
-        maxDurationMs: msg.maxDurationMs ?? 0,
-        stalls: msg.stalls ?? [],
+        total: Math.max(0, (msg.total ?? 0) - ignored),
+        maxDurationMs:
+          ignored === 0
+            ? (msg.maxDurationMs ?? 0)
+            : kept.reduce((m, s) => Math.max(m, s.durationMs), 0),
+        stalls: kept,
       };
       break;
+    }
     case "log": {
       const raw = msg.entry;
       const entry: LogMessage = {
@@ -478,7 +492,6 @@ export function focusedStateOf(
       ...state,
       points,
       hot,
-      hotAvailable: state.hotAvailable,
       stalls,
       rebuildCauses,
       appErrors: route ? state.appErrors.filter((e) => routeMatch(e.route)) : state.appErrors,
@@ -501,6 +514,10 @@ export function resetTelemetry(
   state.points = [];
   state.sessionStartT = null;
   state.gcEvents = [];
+  // The app keeps its stall buffer; remember what is already there so it stays hidden.
+  const known = new Set(state.ignoredStallIds);
+  for (const s of state.stalls?.stalls ?? []) known.add(s.id);
+  state.ignoredStallIds = known;
   state.stalls = null;
   if (opts.network) {
     state.network = [];
