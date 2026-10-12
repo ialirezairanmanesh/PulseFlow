@@ -620,7 +620,11 @@ class BridgeSession {
     await _ensureProfiler();
 
     final String? cpuProbeError = await _probeCpuSamples(isolateId);
-    final bool cpuSamples = cpuProbeError == null;
+    // ADB/DDS timeouts on getCpuSamples are common false negatives on real
+    // profile builds — keep Record enabled and let the recording path retry.
+    // MethodNotFound (and similar) remain a hard disable.
+    final bool cpuTimeout = cpuProbeError == 'timeout';
+    final bool cpuSamples = cpuProbeError == null || cpuTimeout;
 
     Future<bool> probe(String method, Map<String, dynamic> args) async {
       try {
@@ -676,10 +680,13 @@ class BridgeSession {
     _send(<String, Object?>{
       'type': 'capabilities',
       'caps': caps,
-      'message': cpuSamples
+      'message': cpuProbeError == null
           ? 'VM/DDS capability probe complete'
-          : 'VM/DDS capability probe complete — CPU unavailable: $cpuProbeError',
-      if (cpuProbeError != null) 'cpuProbeError': cpuProbeError,
+          : cpuTimeout
+              ? 'VM/DDS capability probe complete — CPU probe timed out; Record may still work'
+              : 'VM/DDS capability probe complete — CPU unavailable: $cpuProbeError',
+      // Only hard failures disable the CPU panel; timeouts stay optimistic.
+      if (cpuProbeError != null && !cpuTimeout) 'cpuProbeError': cpuProbeError,
     });
   }
 

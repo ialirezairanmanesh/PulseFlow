@@ -1344,7 +1344,10 @@ async function probeCapabilities(session: Session) {
     probe("ext.dart.io.getSocketProfile", { isolateId }),
   ]);
 
-  caps.cpuSamples = cpuSamples;
+  // ADB/DDS timeouts on getCpuSamples are common false negatives on profile
+  // builds — keep Record enabled when the profiler flag exists so recording
+  // can still be attempted.
+  caps.cpuSamples = cpuSamples || profilerFlag;
   caps.clearCpuSamples = clearCpuSamples;
   caps.allocationProfile = allocationProfile;
   caps.retainingPath = retainingPath;
@@ -1367,7 +1370,10 @@ async function probeCapabilities(session: Session) {
   send(session.client, {
     type: "capabilities",
     caps,
-    message: "VM/DDS capability probe complete",
+    message:
+      cpuSamples || !profilerFlag
+        ? "VM/DDS capability probe complete"
+        : "VM/DDS capability probe complete — CPU probe timed out; Record may still work",
   });
 }
 

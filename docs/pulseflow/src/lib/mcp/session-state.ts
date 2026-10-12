@@ -252,6 +252,11 @@ export function applyMessage(state: McpSessionState, msg: BridgeServerMessage): 
             ? `CPU probe failed: ${msg.cpuProbeError}`
             : msg.message ||
               "getCpuSamples is not available on this VM. Run the app in profile mode with the CPU profiler enabled.";
+      } else if (
+        typeof msg.message === "string" &&
+        /CPU probe timed out/i.test(msg.message)
+      ) {
+        state.cpuMessage = msg.message;
       }
       break;
     case "cpuProfile":
