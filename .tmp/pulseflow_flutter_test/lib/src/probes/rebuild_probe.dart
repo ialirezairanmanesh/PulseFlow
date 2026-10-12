@@ -201,6 +201,17 @@ class RebuildProbe {
   final Map<String, _RootWindow> _roots = <String, _RootWindow>{};
   final Map<String, _AttrWindow> _attributed = <String, _AttrWindow>{};
 
+  /// Per-frame cache of route labels. `resolveRouteLabel` walks ancestors (and
+  /// matches a RegExp per ancestor), so recomputing it for every rebuilt widget
+  /// and every tree node was the profiler's biggest self-inflicted cost.
+  final HashMap<Element, String> _routeCache = HashMap<Element, String>.identity();
+
+  String _routeOf(Element element) {
+    final String? cached = _routeCache[element];
+    if (cached != null) return cached;
+    return _routeCache[element] = resolveRouteLabel(element);
+  }
+
   void start() {
     if (active) return;
     active = true;
@@ -223,6 +234,7 @@ class RebuildProbe {
     _frameNodes.clear();
     _roots.clear();
     _attributed.clear();
+    _routeCache.clear();
   }
 
   void reset() {
@@ -233,6 +245,7 @@ class RebuildProbe {
     _frameNodes.clear();
     _roots.clear();
     _attributed.clear();
+    _routeCache.clear();
   }
 
   void setFrozen(bool value) {
@@ -251,7 +264,7 @@ class RebuildProbe {
   void _record(Element element) {
     final String name = element.widget.runtimeType.toString();
     final String? keyLabel = _keyLabel(element.widget.key);
-    final String route = resolveRouteLabel(element);
+    final String route = _routeOf(element);
     final String id = '$route|$name|${keyLabel ?? ''}';
     final DateTime now = DateTime.now();
     lastRoute = route;
@@ -363,6 +376,7 @@ class RebuildProbe {
       }
     } finally {
       _frameNodes.clear();
+      _routeCache.clear();
     }
   }
 
@@ -395,7 +409,7 @@ class RebuildProbe {
     for (final Element element in elements) {
       final String name = element.widget.runtimeType.toString();
       if (!_isReusableChildBuilder(name)) continue;
-      final String route = resolveRouteLabel(element);
+      final String route = _routeOf(element);
       final String? keyLabel = _keyLabel(element.widget.key);
       final WidgetEntry? entry = entries['$route|$name|${keyLabel ?? ''}'];
       if (entry == null) continue;
@@ -517,9 +531,10 @@ class RebuildProbe {
       if (nodes.length >= maxNodes) return;
       final String name = el.widget.runtimeType.toString();
       final String? keyLabel = _keyLabel(el.widget.key);
-      final String elRoute = resolveRouteLabel(el);
-      final bool onRoute = elRoute == route;
-      final bool include = underRoute || onRoute;
+      // Once we are inside the target subtree every descendant is on-route, so
+      // resolving the route per node (ancestor walk + RegExp) is pure overhead.
+      final bool onRoute = underRoute || _routeOf(el) == route;
+      final bool include = onRoute;
 
       String? nodeId;
       if (include) {
@@ -559,7 +574,7 @@ class RebuildProbe {
         });
       }
 
-      final bool nextUnder = underRoute || onRoute;
+      final bool nextUnder = onRoute;
       final int nextDepth = nextUnder ? (underRoute ? depth + 1 : 1) : depth;
       final String? nextParent = include ? nodeId : parentId;
       el.visitChildren((Element child) {
@@ -576,6 +591,7 @@ class RebuildProbe {
   Map<String, Object?> snapshot({int limit = 40}) {
     final DateTime now = DateTime.now();
     final DateTime cutoff = now.subtract(const Duration(milliseconds: _windowMs));
+    _routeCache.clear();
     if (!frozen) {
       _pruneWindow(cutoff);
     }

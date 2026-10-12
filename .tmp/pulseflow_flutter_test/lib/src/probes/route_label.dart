@@ -3,57 +3,63 @@ import 'package:flutter/widgets.dart';
 /// Sentinel used when no route/screen label can be resolved.
 const String kUnnamedRoute = '(unnamed)';
 
+/// Suffix pattern for app-level screen widgets. Compiled once — building this
+/// inside [isUsefulScreenName] meant a fresh RegExp per ancestor per call, which
+/// dominated the profiler's own main-isolate CPU.
+final RegExp _screenSuffix = RegExp(
+  r'(Page|Screen|View|Route|Tab|Dashboard|Home|Sheet|Dialog)$',
+);
+
+/// Generic navigator / host shells — not useful as a "page".
+const Set<String> _skipScreenNames = <String>{
+  'MaterialApp',
+  'CupertinoApp',
+  'WidgetsApp',
+  'Navigator',
+  'Overlay',
+  'OverlayEntry',
+  'Scaffold',
+  'Material',
+  'CupertinoPageScaffold',
+  'HeroControllerScope',
+  'UnmanagedRestorationScope',
+  'RestorationScope',
+  'Title',
+  'CheckedModeBanner',
+  'Banner',
+  'Directionality',
+  'Localizations',
+  'MediaQuery',
+  'FocusScope',
+  'Focus',
+  'Actions',
+  'Shortcuts',
+  'DefaultTextStyle',
+  'IconTheme',
+  'Theme',
+  'CupertinoTheme',
+  'ScrollConfiguration',
+  'NotificationListener',
+  'Semantics',
+  'ExcludeSemantics',
+  'Builder',
+  'KeyedSubtree',
+  'RepaintBoundary',
+  'TickerMode',
+  'AnimatedBuilder',
+  'AnimatedWidget',
+  'ListenableBuilder',
+  'ValueListenableBuilder',
+  'StreamBuilder',
+  'FutureBuilder',
+};
+
 /// Returns true when [name] looks like an app-level screen/page widget.
 @visibleForTesting
 bool isUsefulScreenName(String name) {
   if (name.isEmpty || name.startsWith('_')) return false;
-  // Generic navigator / host shells — not useful as a "page".
-  const Set<String> skip = <String>{
-    'MaterialApp',
-    'CupertinoApp',
-    'WidgetsApp',
-    'Navigator',
-    'Overlay',
-    'OverlayEntry',
-    'Scaffold',
-    'Material',
-    'CupertinoPageScaffold',
-    'HeroControllerScope',
-    'UnmanagedRestorationScope',
-    'RestorationScope',
-    'Title',
-    'CheckedModeBanner',
-    'Banner',
-    'Directionality',
-    'Localizations',
-    'MediaQuery',
-    'FocusScope',
-    'Focus',
-    'Actions',
-    'Shortcuts',
-    'DefaultTextStyle',
-    'IconTheme',
-    'Theme',
-    'CupertinoTheme',
-    'ScrollConfiguration',
-    'NotificationListener',
-    'Semantics',
-    'ExcludeSemantics',
-    'Builder',
-    'KeyedSubtree',
-    'RepaintBoundary',
-    'TickerMode',
-    'AnimatedBuilder',
-    'AnimatedWidget',
-    'ListenableBuilder',
-    'ValueListenableBuilder',
-    'StreamBuilder',
-    'FutureBuilder',
-  };
-  if (skip.contains(name)) return false;
-  return RegExp(
-    r'(Page|Screen|View|Route|Tab|Dashboard|Home|Sheet|Dialog)$',
-  ).hasMatch(name);
+  if (_skipScreenNames.contains(name)) return false;
+  return _screenSuffix.hasMatch(name);
 }
 
 String? _namedFromModal(Element element) {
@@ -139,28 +145,38 @@ String? detectLiveRoute() {
     final Element? root = WidgetsBinding.instance.rootElement;
     if (root == null) return null;
 
+    // Modal route names cover MaterialApp/CupertinoApp. Collect them first and
+    // only fall back to the Router URI walk when there are none — the per-node
+    // `Router.maybeOf` ancestor walk was half of this function's CPU cost.
     final List<String> modals = <String>[];
-    final List<String> routers = <String>[];
-    void visitor(Element el) {
+    void visitModals(Element el) {
       final String? named = _namedFromModal(el);
       if (named != null && named.isNotEmpty) modals.add(named);
+      el.visitChildren(visitModals);
+    }
+
+    root.visitChildren(visitModals);
+    if (modals.isNotEmpty) return _pickDeepest(modals);
+
+    final List<String> routers = <String>[];
+    void visitRouters(Element el) {
       final String? path = _locationFromRouter(el);
       if (path != null && path.isNotEmpty) routers.add(path);
-      el.visitChildren(visitor);
+      el.visitChildren(visitRouters);
     }
 
-    root.visitChildren(visitor);
-
-    String? pick(List<String> values) {
-      if (values.isEmpty) return null;
-      for (var i = values.length - 1; i >= 0; i--) {
-        if (values[i] != '/') return values[i];
-      }
-      return values.last;
-    }
-
-    return pick(modals) ?? pick(routers);
+    root.visitChildren(visitRouters);
+    return _pickDeepest(routers);
   } catch (_) {
     return null;
   }
+}
+
+/// Deepest non-`/` label, else the last one.
+String? _pickDeepest(List<String> values) {
+  if (values.isEmpty) return null;
+  for (var i = values.length - 1; i >= 0; i--) {
+    if (values[i] != '/') return values[i];
+  }
+  return values.last;
 }
