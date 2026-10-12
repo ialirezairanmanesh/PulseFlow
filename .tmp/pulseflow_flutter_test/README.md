@@ -376,6 +376,7 @@ baselines `pulseflow_snapshot` / `pulseflow_compare`; controls `pulseflow_debug_
 | --- | --- |
 | “Widget probe not available” / empty Widgets | Call `registerPulseFlow`, hot-restart, run in **debug** (not profile/release) |
 | App missing from Scan | Paste the full VM Service URL from the `flutter run` console |
+| Won't connect, "stale ADB forward" / HTTP 503 | A leftover `adb forward` points at a dead device port. Run `adb forward --remove-all`, then `flutter run` again and use the fresh URL |
 | Empty Network panel | Keep `captureNetwork: true`; if you set `HttpOverrides.global` later, chain to the previous override |
 | Wrong / missing source files | Set `appPackage` to your pubspec `name`; use debug |
 | Scenarios disabled | Release mode, or extensions not registered — restart in debug/profile |

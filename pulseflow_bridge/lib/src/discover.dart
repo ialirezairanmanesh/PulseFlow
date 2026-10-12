@@ -650,7 +650,7 @@ bool _looksLikeDevTools(String body, int status) {
       RegExp('DevTools', caseSensitive: false).hasMatch(body);
 }
 
-Future<({int status, String body})?> _httpGet(String url, int timeoutMs) async {
+Future<({int status, String body, bool viaAdbForward})?> _httpGet(String url, int timeoutMs) async {
   HttpClient? client;
   try {
     client = HttpClient()..connectionTimeout = Duration(milliseconds: timeoutMs);
@@ -662,7 +662,15 @@ Future<({int status, String body})?> _httpGet(String url, int timeoutMs) async {
         .transform(utf8.decoder)
         .join()
         .timeout(Duration(milliseconds: timeoutMs));
-    return (status: res.statusCode, body: body.substring(0, body.length > 4000 ? 4000 : body.length));
+    // `adb forward` answers a dead device-side port with 503 +
+    // `Proxy-Connection: close`. Flag it so a stale forward is not confused with
+    // a real VM Service / DDS endpoint.
+    final bool viaAdbForward = res.headers.value('proxy-connection') != null;
+    return (
+      status: res.statusCode,
+      body: body.substring(0, body.length > 4000 ? 4000 : body.length),
+      viaAdbForward: viaAdbForward,
+    );
   } catch (_) {
     return null;
   } finally {
@@ -686,6 +694,20 @@ Future<DiscoveredApp?> _probePort(
       resolvedPort = Uri.parse(ddsHttp).port;
     } catch (_) {}
     final _Probe? probe = await probeVmOverWs(wsUrl, 1200);
+    // DDS returns 503 while its VM service link is down (common on Android
+    // emulators) and 403 for a stale auth token. Say so instead of the generic
+    // "probe failed" so the fix is obvious.
+    final ({int status, String body, bool viaAdbForward})? ddsRes =
+        probe == null ? await _httpGet(ddsHttp, 900) : null;
+    final String detail = probe != null
+        ? 'Dart Development Service (from flutter run)'
+        : (ddsRes?.viaAdbForward == true && ddsRes?.status == 503)
+            ? 'stale ADB forward — run: adb forward --remove-all, then flutter run'
+            : ddsRes?.status == 503
+                ? 'DDS unavailable (HTTP 503) — re-run with: flutter run --no-dds'
+                : ddsRes?.status == 403
+                    ? 'DDS needs a fresh auth token — re-run the app, then Scan again'
+                    : 'DDS found but WebSocket probe failed';
     final List<String> nameParts = <String>[
       if (ddsHint.appName != null) ddsHint.appName!,
       if (ddsHint.deviceName != null) ddsHint.deviceName! else if (adb != null) adb.deviceName,
@@ -709,13 +731,14 @@ Future<DiscoveredApp?> _probePort(
       connectable: probe != null,
       deviceName: ddsHint.deviceName ?? adb?.deviceName,
       deviceSerial: adb?.serial ?? _hintDeviceSerial(flutterHints, adb),
-      detail: probe != null ? 'Dart Development Service (from flutter run)' : 'DDS found but WebSocket probe failed',
+      detail: detail,
     );
   }
 
   final String plainWs = 'ws://127.0.0.1:$port/ws';
   final String httpUrl = 'http://127.0.0.1:$port/';
-  final ({int status, String body})? res = await _httpGet(httpUrl, adb != null ? 900 : 350);
+  final ({int status, String body, bool viaAdbForward})? res =
+      await _httpGet(httpUrl, adb != null ? 900 : 350);
   if (res != null && _looksLikeDevTools(res.body, res.status)) return null;
   // Scrcpy / other Java WebSocket servers sometimes share ADB forwards.
   if (res != null &&
@@ -784,7 +807,11 @@ Future<DiscoveredApp?> _probePort(
     deviceName: adb?.deviceName,
     deviceSerial: adb?.serial ?? _hintDeviceSerial(flutterHints, adb),
     detail: adb != null
-        ? (probe != null ? 'via ADB' : 'ADB forward — paste full VM Service URL from flutter run')
+        ? (probe != null
+            ? 'via ADB'
+            : (res?.viaAdbForward == true && res?.status == 503)
+                ? 'stale ADB forward — run: adb forward --remove-all, then flutter run'
+                : 'ADB forward — paste full VM Service URL from flutter run')
         : (probe != null ? 'Found by scanning localhost ports' : 'Detected Dart HTTP service (could not open VM WebSocket)'),
   );
 }
