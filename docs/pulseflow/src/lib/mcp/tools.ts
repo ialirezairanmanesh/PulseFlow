@@ -21,11 +21,16 @@ import {
   summarizeProblemDiff,
 } from "@/lib/session-history";
 import {
+  clearTelemetry,
+  focusedStateOf,
   hasTelemetry,
   problemsOf,
   reportJsonOf,
   reportMarkdownOf,
+  resetTelemetry,
   sessionStatsOf,
+  verdictOf,
+  type FocusOptions,
   type McpSessionState,
 } from "@/lib/mcp/session-state";
 
@@ -75,6 +80,24 @@ function numArg(args: Record<string, unknown>, key: string, fallback: number): n
   const raw = args[key];
   const n = typeof raw === "number" ? raw : Number(raw);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
+}
+
+const FOCUS_PROPERTIES: Record<string, unknown> = {
+  route: { type: "string", description: "Route focus, e.g. /MainPage. Filters hot widgets, stalls, errors, rebuild roots." },
+  excludeFirstSec: {
+    type: "number",
+    description: "Drop frame samples from the first N seconds of the session (cold start / warmup). Dashboard options: 2, 5, 10, 20.",
+  },
+  windowMs: { type: "number", description: "Keep only frame samples from the last N ms of the buffer." },
+};
+
+function focusArgs(args: Record<string, unknown>): FocusOptions {
+  const route = typeof args.route === "string" ? args.route.trim() : "";
+  return {
+    route: route || undefined,
+    excludeFirstSec: numArg(args, "excludeFirstSec", 0),
+    windowMs: numArg(args, "windowMs", 0) || undefined,
+  };
 }
 
 function problemLine(p: PerformanceProblem): string {
@@ -239,6 +262,8 @@ export const TOOLS: ToolDef[] = [
       additionalProperties: false,
     },
     handler: async (ctx, args) => {
+      // Fresh session per connect, like the dashboard's connect/mock (no stale warmup anchor or samples).
+      clearTelemetry(ctx.state);
       if (args.mock === true) {
         ctx.send({ type: "mock" });
         await ctx.waitFor("status", 5_000);
@@ -272,7 +297,8 @@ export const TOOLS: ToolDef[] = [
     inputSchema: NO_ARGS,
     handler: (ctx) => {
       ctx.send({ type: "disconnect" });
-      return text("Disconnected.");
+      clearTelemetry(ctx.state);
+      return text("Disconnected. Telemetry cleared.");
     },
   },
   {
@@ -417,13 +443,18 @@ export const TOOLS: ToolDef[] = [
   {
     name: "pulseflow_frames",
     description:
-      "Frame-budget health: P95 build/raster vs the device frame budget, jank ratio, latest frame, and UI stalls (main-isolate freezes).",
-    inputSchema: NO_ARGS,
-    handler: (ctx) => {
-      const s = ctx.state;
+      "Frame-budget health: P95 build/raster vs the device frame budget, jank ratio, latest frame, and UI stalls (main-isolate freezes). Pass route / excludeFirstSec / windowMs to match the dashboard's focus filters; `focus` in the output shows what was applied.",
+    inputSchema: {
+      type: "object",
+      properties: FOCUS_PROPERTIES,
+      additionalProperties: false,
+    },
+    handler: (ctx, args) => {
+      const { state: s, info } = focusedStateOf(ctx.state, focusArgs(args));
       const latest = s.points.at(-1);
       const stats = sessionStatsOf(s);
       return json({
+        focus: info,
         samples: s.points.length,
         p95BuildMs: stats.p95BuildMs,
         p95RasterMs: stats.p95RasterMs,
@@ -433,6 +464,66 @@ export const TOOLS: ToolDef[] = [
         budgetMs: latest?.buildBudgetMs ?? null,
         stalls: s.stalls,
       });
+    },
+  },
+  {
+    name: "pulseflow_focus_snapshot",
+    description:
+      "Dashboard-equivalent view of the session under the same focus filters the Focus UI uses (route, excludeFirstSec, windowMs): frame stats, verdict, and ranked problems computed on the filtered data. Use this instead of pulseflow_problems when comparing to what the dashboard shows.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...FOCUS_PROPERTIES,
+        limit: { type: "number", description: "Max problems to return (default 12)" },
+      },
+      additionalProperties: false,
+    },
+    handler: (ctx, args) => {
+      const { state: s, info } = focusedStateOf(ctx.state, focusArgs(args));
+      const limit = numArg(args, "limit", 12);
+      const problems = problemsOf(s);
+      const stats = sessionStatsOf(s);
+      const verdict = verdictOf(s);
+      return json({
+        focus: info,
+        verdict,
+        stats,
+        problems: problems.slice(0, limit).map((p) => ({
+          severity: p.severity,
+          title: p.title,
+          route: p.route ?? null,
+          widget: p.widget ?? null,
+          source: p.sourceUri ? `${p.sourceUri}${p.sourceLine ? `:${p.sourceLine}` : ""}` : null,
+          action: p.action,
+        })),
+        totalProblems: problems.length,
+      });
+    },
+  },
+  {
+    name: "pulseflow_reset_telemetry",
+    description:
+      "Start a clean measurement without disconnecting: clears frame samples, GC events, and stalls, and re-anchors the warmup clock to the next sample. Optional flags also clear network, errors, and hot-widget counters (hot also resets the app-side rebuild counters).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        network: { type: "boolean", description: "Also clear network requests and sockets" },
+        errors: { type: "boolean", description: "Also clear captured runtime errors" },
+        hot: { type: "boolean", description: "Also clear hot-widget counters (sends a reset to the app)" },
+      },
+      additionalProperties: false,
+    },
+    handler: (ctx, args) => {
+      const opts = {
+        network: args.network === true,
+        errors: args.errors === true,
+        hot: args.hot === true,
+      };
+      resetTelemetry(ctx.state, opts);
+      if (opts.hot) ctx.send({ type: "hotWidgetsControl", action: "reset" });
+      return text(
+        `Telemetry reset (samples, GC, stalls${opts.network ? ", network" : ""}${opts.errors ? ", errors" : ""}${opts.hot ? ", hot widgets" : ""}). Warmup clock restarts at the next frame sample.`,
+      );
     },
   },
   {

@@ -93,6 +93,12 @@ export interface McpSessionState {
   isolateName?: string;
   error?: string;
   points: MetricPoint[];
+  /**
+   * `t` of the first metrics sample since the session was cleared. Warmup
+   * (`excludeFirstSec`) is measured from here, not from the rolling buffer
+   * head, so the cutoff stays correct after the 60-sample buffer rolls.
+   */
+  sessionStartT: number | null;
   gcEvents: GcEvent[];
   network: NetworkRequest[];
   sockets: SocketSample[];
@@ -139,6 +145,7 @@ export function createSessionState(): McpSessionState {
     status: "idle",
     statusMessage: "Not connected",
     points: [],
+    sessionStartT: null,
     gcEvents: [],
     network: [],
     sockets: [],
@@ -200,6 +207,7 @@ export function applyMessage(state: McpSessionState, msg: BridgeServerMessage): 
       }
       break;
     case "metrics":
+      if (state.sessionStartT == null) state.sessionStartT = msg.point.t;
       state.points = [...state.points, msg.point].slice(-MAX_POINTS);
       break;
     case "gc":
@@ -398,6 +406,112 @@ export function sessionStatsOf(state: McpSessionState): SessionStats {
     heapMb: metrics.heapMb,
     jankRatio: metrics.jankRatio,
   };
+}
+
+export interface FocusOptions {
+  /** Only keep route-scoped data (hot widgets, stalls, errors, rebuild roots) for this route. */
+  route?: string;
+  /** Drop frame samples recorded in the first N seconds of the session (cold start). */
+  excludeFirstSec?: number;
+  /** Keep only frame samples from the last N ms of the buffer. */
+  windowMs?: number;
+}
+
+export interface FocusInfo {
+  route: string | null;
+  excludeFirstSec: number;
+  windowMs: number | null;
+  samplesTotal: number;
+  samplesKept: number;
+}
+
+/**
+ * Mirrors the dashboard's focus filters (`problems-list.tsx`): route focus and
+ * the warmup / window cut on the frame samples. Returns a shallow derived
+ * state, so `problemsOf` / `sessionStatsOf` / `verdictOf` give the same answer
+ * the dashboard shows for the same focus.
+ */
+export function focusedStateOf(
+  state: McpSessionState,
+  opts: FocusOptions = {},
+): { state: McpSessionState; info: FocusInfo } {
+  const route = opts.route?.trim() || undefined;
+  const excludeFirstSec = opts.excludeFirstSec && opts.excludeFirstSec > 0 ? opts.excludeFirstSec : 0;
+  const windowMs = opts.windowMs && opts.windowMs > 0 ? opts.windowMs : undefined;
+
+  const warmupCutoff =
+    excludeFirstSec > 0 && state.sessionStartT != null ? state.sessionStartT + excludeFirstSec * 1000 : 0;
+  const latestT = state.points.at(-1)?.t;
+  const windowCutoff = windowMs != null && latestT != null ? latestT - windowMs : 0;
+  const points = state.points.filter(
+    (p) => (!warmupCutoff || p.t >= warmupCutoff) && (!windowCutoff || p.t >= windowCutoff),
+  );
+
+  const routeMatch = (r?: string) => !route || !r || r === route;
+  const hot = state.hot
+    ? {
+        ...state.hot,
+        widgets: state.hot.widgets.filter((w) => routeMatch(w.route)),
+        tree: state.hot.tree?.filter((w) => routeMatch(w.route)),
+        screens: state.hot.screens.filter((s) => routeMatch(s.route)),
+      }
+    : null;
+  const stalls: StallsSnapshot | null = state.stalls
+    ? (() => {
+        const kept = state.stalls.stalls.filter((s) => routeMatch(s.route));
+        return {
+          ...state.stalls,
+          total: route ? kept.length : state.stalls.total,
+          maxDurationMs: route
+            ? kept.reduce((m, s) => Math.max(m, s.durationMs), 0)
+            : state.stalls.maxDurationMs,
+          stalls: kept,
+        };
+      })()
+    : null;
+  const rebuildCauses = state.rebuildCauses && route
+    ? { ...state.rebuildCauses, roots: state.rebuildCauses.roots.filter((r) => routeMatch(r.route)) }
+    : state.rebuildCauses;
+
+  return {
+    state: {
+      ...state,
+      points,
+      hot,
+      hotAvailable: state.hotAvailable,
+      stalls,
+      rebuildCauses,
+      appErrors: route ? state.appErrors.filter((e) => routeMatch(e.route)) : state.appErrors,
+    },
+    info: {
+      route: route ?? null,
+      excludeFirstSec,
+      windowMs: windowMs ?? null,
+      samplesTotal: state.points.length,
+      samplesKept: points.length,
+    },
+  };
+}
+
+/** Clears session telemetry in place (warmup anchor included). Use for reset / connect / disconnect. */
+export function resetTelemetry(
+  state: McpSessionState,
+  opts: { network?: boolean; errors?: boolean; hot?: boolean } = {},
+): void {
+  state.points = [];
+  state.sessionStartT = null;
+  state.gcEvents = [];
+  state.stalls = null;
+  if (opts.network) {
+    state.network = [];
+    state.sockets = [];
+  }
+  if (opts.errors) state.appErrors = [];
+  if (opts.hot) {
+    state.hot = null;
+    state.hotAvailable = null;
+    state.probeFrozen = false;
+  }
 }
 
 function agentReportInput(state: McpSessionState) {
