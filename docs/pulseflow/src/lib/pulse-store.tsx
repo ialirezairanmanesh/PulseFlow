@@ -92,7 +92,8 @@ export interface BuildInfoState {
   probes: ProbeAvailability;
 }
 
-const MAX_POINTS = 60;
+/** Keep ~4s of 60 Hz Flutter.Frame samples (plus occasional poll echoes). */
+const MAX_POINTS = 240;
 const MAX_GC = 40;
 const MAX_NET = 200;
 

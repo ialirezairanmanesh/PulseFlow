@@ -1,20 +1,24 @@
 import { FRAME_BUDGET } from "@/lib/chart-utils";
+import { frameDensity, frameSamples, jankRatioOf } from "@/lib/frame-metrics";
 import { percentile } from "@/lib/problems";
 import type { MetricPoint, PerformanceProblem } from "@/lib/types";
 
 export interface SessionBudgets {
   maxP95BuildMs: number;
   maxP95RasterMs: number;
+  maxP95FrameMs: number;
   maxJankRatio: number;
 }
 
 export interface BudgetResult {
-  key: "p95Build" | "p95Raster" | "jank";
+  key: "p95Build" | "p95Raster" | "p95Frame" | "jank";
   label: string;
   value: number;
   budget: number;
   passed: boolean;
   unit: "ms" | "ratio";
+  /** Jank chip only: ratio ignored for pass/fail because samples are sparse/stale. */
+  inconclusive?: boolean;
 }
 
 export interface HealthVerdict {
@@ -55,26 +59,36 @@ function worstBudgetText(b: BudgetResult): string {
  * One shared health verdict for the whole session, mirroring the budget semantics
  * of `evaluateBudgets` in the bridge's `check.dart` so the dashboard and the
  * headless CI check agree on pass/fail.
+ *
+ * Primary gates: P95 build / raster / frame vs device budget.
+ * Jank% only fails when frame samples are dense; sparse/stale poll echo is ignored.
  */
 export function computeVerdict(input: VerdictInput): HealthVerdict {
   const measured = input.budgetMs ?? input.points.at(-1)?.buildBudgetMs;
   const budgetMs = measured && measured > 0 ? measured : FRAME_BUDGET;
   const maxP95BuildMs = input.budgets?.maxP95BuildMs ?? budgetMs;
   const maxP95RasterMs = input.budgets?.maxP95RasterMs ?? budgetMs;
+  const maxP95FrameMs = input.budgets?.maxP95FrameMs ?? budgetMs;
   const maxJankRatio = input.budgets?.maxJankRatio ?? DEFAULT_MAX_JANK_RATIO;
 
-  const hasSamples = input.points.length > 0;
+  const frames = frameSamples(input.points);
+  const hasSamples = frames.length > 0;
+  const density = frameDensity(input.points);
   const p95BuildMs = percentile(
-    input.points.map((p) => p.buildMs),
+    frames.map((p) => p.buildMs),
     95,
   );
   const p95RasterMs = percentile(
-    input.points.map((p) => p.rasterMs),
+    frames.map((p) => p.rasterMs),
     95,
   );
-  const jankRatio = hasSamples
-    ? input.points.filter((p) => p.jank).length / input.points.length
-    : 0;
+  const p95FrameMs = percentile(
+    frames.map((p) => p.frameMs),
+    95,
+  );
+  const jankRatio = jankRatioOf(input.points);
+  const jankInconclusive = density.sparse;
+  const jankPassed = jankInconclusive || jankRatio <= maxJankRatio;
 
   const budgets: BudgetResult[] = [
     {
@@ -82,7 +96,7 @@ export function computeVerdict(input: VerdictInput): HealthVerdict {
       label: "P95 build",
       value: p95BuildMs,
       budget: maxP95BuildMs,
-      passed: p95BuildMs <= maxP95BuildMs,
+      passed: !hasSamples || p95BuildMs <= maxP95BuildMs,
       unit: "ms",
     },
     {
@@ -90,7 +104,15 @@ export function computeVerdict(input: VerdictInput): HealthVerdict {
       label: "P95 raster",
       value: p95RasterMs,
       budget: maxP95RasterMs,
-      passed: p95RasterMs <= maxP95RasterMs,
+      passed: !hasSamples || p95RasterMs <= maxP95RasterMs,
+      unit: "ms",
+    },
+    {
+      key: "p95Frame",
+      label: "P95 frame",
+      value: p95FrameMs,
+      budget: maxP95FrameMs,
+      passed: !hasSamples || p95FrameMs <= maxP95FrameMs,
       unit: "ms",
     },
     {
@@ -98,12 +120,13 @@ export function computeVerdict(input: VerdictInput): HealthVerdict {
       label: "Jank ratio",
       value: jankRatio,
       budget: maxJankRatio,
-      passed: jankRatio <= maxJankRatio,
+      passed: jankPassed,
       unit: "ratio",
+      inconclusive: jankInconclusive,
     },
   ];
 
-  const misses = budgets.filter((b) => !b.passed);
+  const misses = budgets.filter((b) => !b.passed && !b.inconclusive);
   const high = input.problems.filter((p) => p.severity === "high").length;
   const medium = input.problems.filter((p) => p.severity === "medium").length;
 
@@ -136,7 +159,15 @@ export function computeVerdict(input: VerdictInput): HealthVerdict {
   }
 
   let headline: string;
-  if (misses.length) {
+  const jankLooksInflated = jankInconclusive && jankRatio > maxJankRatio;
+  if (jankLooksInflated && misses.length === 0) {
+    headline = `Jank ${pct(jankRatio)} looks inflated (sparse / stale poll) — trust P95 frame ${p95FrameMs.toFixed(1)} ms vs ${budgetMs.toFixed(1)} ms budget.`;
+  } else if (jankLooksInflated && misses.some((m) => m.key === "p95Frame" || m.key === "p95Build" || m.key === "p95Raster")) {
+    const worst = [...misses].sort(
+      (a, b) => b.value / (b.budget || 1) - a.value / (a.budget || 1),
+    )[0]!;
+    headline = `${worstBudgetText(worst)} Jank% ignored (sparse / stale poll).`;
+  } else if (misses.length) {
     const worst = [...misses].sort(
       (a, b) => b.value / (b.budget || 1) - a.value / (a.budget || 1),
     )[0]!;

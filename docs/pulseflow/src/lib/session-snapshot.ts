@@ -30,7 +30,7 @@ export interface ShareSnapshot {
   controlMessage?: string;
 }
 
-const MAX_POINTS = 60;
+const MAX_POINTS = 240;
 const MAX_WIDGETS = 20;
 
 /**

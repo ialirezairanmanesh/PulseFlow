@@ -48,20 +48,20 @@ function ctxFor(state: McpSessionState): { ctx: ToolContext; sent: unknown[] } {
 
 describe("focusedStateOf", () => {
   it("anchors warmup to the session start, not the rolling buffer head", () => {
-    // 100 samples: the 60-sample buffer now starts at t=40s, but the session started at t=0.
-    const state = sessionWith(100);
-    expect(state.points[0].t).toBe(40_000);
+    // 300 samples into a 240-sample buffer → head is t=60s, but the session started at t=0.
+    const state = sessionWith(300);
+    expect(state.points[0].t).toBe(60_000);
     expect(state.sessionStartT).toBe(0);
 
     const { state: focused, info } = focusedStateOf(state, { excludeFirstSec: 10 });
-    expect(focused.points[0].t).toBe(40_000);
-    expect(info.samplesTotal).toBe(60);
-    expect(info.samplesKept).toBe(60);
+    expect(focused.points[0].t).toBe(60_000);
+    expect(info.samplesTotal).toBe(240);
+    expect(info.samplesKept).toBe(240);
 
-    // Warmup 50s drops the samples before t=50s.
-    const late = focusedStateOf(state, { excludeFirstSec: 50 });
-    expect(late.info.samplesKept).toBe(50);
-    expect(late.state.points[0].t).toBe(50_000);
+    // Warmup 100s drops the samples before t=100s.
+    const late = focusedStateOf(state, { excludeFirstSec: 100 });
+    expect(late.info.samplesKept).toBe(200);
+    expect(late.state.points[0].t).toBe(100_000);
   });
 
   it("windowMs keeps only the most recent samples", () => {

@@ -54,14 +54,56 @@ describe("computeVerdict", () => {
     expect(at120.budgets.find((b) => b.key === "p95Build")?.passed).toBe(false);
   });
 
-  it("flags a high jank ratio against the default ceiling", () => {
-    const points = Array.from({ length: 10 }, (_, i) =>
-      point({ buildMs: 5, jank: i < 4 ? 1 : 0 }),
+  it("flags a high jank ratio against the default ceiling when samples are dense", () => {
+    const points = Array.from({ length: 90 }, (_, i) =>
+      point({
+        t: i * 16,
+        buildMs: 5,
+        rasterMs: 3,
+        frameMs: 10,
+        jank: i < 40 ? 1 : 0,
+        sample: "frame",
+      }),
     );
     const verdict = computeVerdict({ points, problems: [] });
     const jank = verdict.budgets.find((b) => b.key === "jank");
     expect(jank?.budget).toBe(DEFAULT_MAX_JANK_RATIO);
     expect(jank?.passed).toBe(false);
+    expect(jank?.inconclusive).toBeFalsy();
+  });
+
+  it("does not fail on inflated jank from sparse / stale poll echoes", () => {
+    const points = [
+      point({ t: 0, buildMs: 8, rasterMs: 4, frameMs: 18, jank: 1, sample: "frame" }),
+      ...Array.from({ length: 40 }, (_, i) =>
+        point({
+          t: 500 * (i + 1),
+          buildMs: 8,
+          rasterMs: 4,
+          frameMs: 18,
+          jank: 0,
+          sample: "poll",
+        }),
+      ),
+    ];
+    const verdict = computeVerdict({ points, problems: [] });
+    const jank = verdict.budgets.find((b) => b.key === "jank");
+    expect(jank?.value).toBe(1);
+    expect(jank?.inconclusive).toBe(true);
+    expect(jank?.passed).toBe(true);
+    expect(verdict.headline).toMatch(/sparse|stale poll/i);
+    expect(verdict.headline).toMatch(/P95 frame/i);
+    // Primary gates still use the real frame sample.
+    expect(verdict.budgets.find((b) => b.key === "p95Frame")?.passed).toBe(false);
+  });
+
+  it("uses P95 frame as a primary budget chip", () => {
+    const points = Array.from({ length: 10 }, (_, i) =>
+      point({ t: i * 16, buildMs: 5, rasterMs: 3, frameMs: 20, sample: "frame" }),
+    );
+    const verdict = computeVerdict({ points, problems: [] });
+    expect(verdict.budgets.find((b) => b.key === "p95Frame")?.passed).toBe(false);
+    expect(verdict.headline).toMatch(/P95 frame/);
   });
 
   it("lowers the score as problems accumulate", () => {

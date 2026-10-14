@@ -73,15 +73,21 @@ export function HealthVerdict({ verdict }: { verdict: HealthVerdict }) {
           <div
             key={b.key}
             className={`flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-xs ${
-              b.passed
-                ? "border-teal-400/20 bg-teal-500/10 text-teal-100"
-                : "border-rose-400/25 bg-rose-500/10 text-rose-100"
+              b.inconclusive
+                ? "border-white/15 bg-white/5 text-[var(--ink-muted)]"
+                : b.passed
+                  ? "border-teal-400/20 bg-teal-500/10 text-teal-100"
+                  : "border-rose-400/25 bg-rose-500/10 text-rose-100"
             }`}
-            title={`${b.label}: ${b.passed ? "within budget" : "over budget"}`}
+            title={
+              b.inconclusive
+                ? `${b.label}: sparse / stale poll — not used for pass/fail`
+                : `${b.label}: ${b.passed ? "within budget" : "over budget"}`
+            }
           >
             <span className="text-[10px] uppercase tracking-[0.12em] opacity-70">{b.label}</span>
             <span className="font-mono">{budgetValue(b)}</span>
-            <span aria-hidden>{b.passed ? "✓" : "✕"}</span>
+            <span aria-hidden>{b.inconclusive ? "—" : b.passed ? "✓" : "✕"}</span>
           </div>
         ))}
       </div>

@@ -12,6 +12,8 @@ import type {
   PerformanceProblem,
 } from "@/lib/types";
 import type { SavedSession } from "@/lib/session-history";
+import { analyzeAppSize, diffAppSize, formatSizeKb } from "@/lib/app-size";
+import { frameDensity, frameSamples, jankRatioOf } from "@/lib/frame-metrics";
 import {
   compareSessions,
   diffProblems,
@@ -56,6 +58,8 @@ export interface ToolContext {
   ): Promise<BridgeServerMessage | null>;
   /** Writes a file under the OS temp dir and returns its absolute path. */
   writeFile(fileName: string, content: string): string;
+  /** Reads a UTF-8 file from disk (MCP host). Optional in unit tests. */
+  readFile?(path: string): string;
   log(message: string): void;
 }
 
@@ -449,7 +453,7 @@ export const TOOLS: ToolDef[] = [
   {
     name: "pulseflow_frames",
     description:
-      "Frame-budget health: P95 build/raster vs the device frame budget, jank ratio, latest frame, and UI stalls (main-isolate freezes). Pass route / excludeFirstSec / windowMs to match the dashboard's focus filters; `focus` in the output shows what was applied.",
+      "Frame-budget health: P95 build/raster/frame vs the device frame budget (primary), jank ratio only when frame samples are dense, latest real Flutter.Frame, and UI stalls. Pass route / excludeFirstSec / windowMs to match the dashboard's focus filters; `focus` in the output shows what was applied.",
     inputSchema: {
       type: "object",
       properties: FOCUS_PROPERTIES,
@@ -457,15 +461,28 @@ export const TOOLS: ToolDef[] = [
     },
     handler: (ctx, args) => {
       const { state: s, info } = focusedStateOf(ctx.state, focusArgs(args));
-      const latest = s.points.at(-1);
+      const frames = frameSamples(s.points);
+      const density = frameDensity(s.points);
+      const latest = frames.at(-1) ?? s.points.at(-1);
       const stats = sessionStatsOf(s);
+      const verdict = verdictOf(s);
       return json({
         focus: info,
         samples: s.points.length,
+        frameSamples: frames.length,
+        jankDense: density.dense,
+        jankSparse: density.sparse,
+        jankFps: Number(density.fps.toFixed(1)),
         p95BuildMs: stats.p95BuildMs,
         p95RasterMs: stats.p95RasterMs,
         p95FrameMs: stats.p95FrameMs,
-        jankRatio: stats.jankRatio,
+        jankRatio: jankRatioOf(s.points),
+        jankInconclusive: density.sparse,
+        verdict: {
+          status: verdict.status,
+          score: verdict.score,
+          headline: verdict.headline,
+        },
         refreshRate: latest?.refreshRate ?? null,
         budgetMs: latest?.buildBudgetMs ?? null,
         stalls: s.stalls,
@@ -736,6 +753,130 @@ export const TOOLS: ToolDef[] = [
       }
       ctx.send({ type: "hotWidgetsControl", action });
       return text(`Widget ranks: ${action}.`);
+    },
+  },
+  {
+    name: "pulseflow_app_size",
+    description:
+      "Analyze a Flutter `--analyze-size` JSON (`*-code-size-analysis_*.json`): total size, top-level buckets, largest Dart packages and assets, and shrink tips. Pass `path` to a file on disk and/or `json` with the raw contents. Optionally pass `beforePath`/`beforeJson` to diff two builds.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: {
+          type: "string",
+          description: "Absolute path to *-code-size-analysis_*.json from flutter build --analyze-size",
+        },
+        json: {
+          type: "string",
+          description: "Raw size-analysis JSON string (alternative to path)",
+        },
+        beforePath: {
+          type: "string",
+          description: "Optional previous analysis path for a before/after diff",
+        },
+        beforeJson: {
+          type: "string",
+          description: "Optional previous analysis JSON string for a before/after diff",
+        },
+        limit: {
+          type: "number",
+          description: "Max rows per ranking list (default 15)",
+        },
+      },
+      additionalProperties: false,
+    },
+    handler: (ctx, args) => {
+      const limit = numArg(args, "limit", 15);
+      const load = (pathKey: string, jsonKey: string): unknown => {
+        const rawJson = args[jsonKey];
+        if (typeof rawJson === "string" && rawJson.trim()) {
+          return JSON.parse(rawJson) as unknown;
+        }
+        const path = typeof args[pathKey] === "string" ? (args[pathKey] as string).trim() : "";
+        if (!path) return null;
+        if (!ctx.readFile) {
+          throw new Error("readFile is not available in this MCP host — pass `json` instead of `path`.");
+        }
+        return JSON.parse(ctx.readFile(path)) as unknown;
+      };
+
+      let afterRaw: unknown;
+      try {
+        afterRaw = load("path", "json");
+      } catch (err) {
+        return text(err instanceof Error ? err.message : String(err), true);
+      }
+      if (afterRaw == null) {
+        return text(
+          "Provide `path` or `json` for a Flutter size-analysis file (flutter build … --analyze-size).",
+          true,
+        );
+      }
+
+      let analysis;
+      try {
+        analysis = analyzeAppSize(afterRaw, { topN: limit });
+      } catch (err) {
+        return text(err instanceof Error ? err.message : String(err), true);
+      }
+
+      let beforeRaw: unknown = null;
+      try {
+        beforeRaw = load("beforePath", "beforeJson");
+      } catch (err) {
+        return text(err instanceof Error ? err.message : String(err), true);
+      }
+
+      const payload: Record<string, unknown> = {
+        rootName: analysis.rootName,
+        type: analysis.type,
+        totalBytes: analysis.totalBytes,
+        totalHuman: formatSizeKb(analysis.totalBytes),
+        categories: analysis.categories.slice(0, limit).map((e) => ({
+          name: e.name,
+          bytes: e.bytes,
+          share: e.share,
+          kind: e.kind,
+        })),
+        packages: analysis.packages.slice(0, limit).map((e) => ({
+          name: e.name,
+          bytes: e.bytes,
+          share: e.share,
+        })),
+        assets: analysis.assets.slice(0, limit).map((e) => ({
+          name: e.name,
+          bytes: e.bytes,
+          share: e.share,
+          path: e.path,
+        })),
+        top: analysis.top.slice(0, limit).map((e) => ({
+          name: e.name,
+          bytes: e.bytes,
+          share: e.share,
+          kind: e.kind,
+          path: e.path,
+        })),
+        tips: analysis.tips,
+      };
+
+      if (beforeRaw != null) {
+        try {
+          const before = analyzeAppSize(beforeRaw, { topN: limit });
+          const diff = diffAppSize(before, analysis, limit);
+          payload.diff = {
+            beforeTotal: diff.beforeTotal,
+            afterTotal: diff.afterTotal,
+            deltaBytes: diff.deltaBytes,
+            deltaHuman: `${diff.deltaBytes >= 0 ? "+" : "-"}${formatSizeKb(Math.abs(diff.deltaBytes))}`,
+            grew: diff.grew,
+            shrank: diff.shrank,
+          };
+        } catch (err) {
+          return text(err instanceof Error ? err.message : String(err), true);
+        }
+      }
+
+      return json(payload);
     },
   },
 ];

@@ -7,7 +7,7 @@
  *
  * IMPORTANT: stdout carries MCP protocol frames only — all logging goes to stderr.
  */
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
@@ -56,6 +56,7 @@ function makeContext(): ToolContext {
       writeFileSync(path, content, "utf8");
       return path;
     },
+    readFile: (path) => readFileSync(path, "utf8"),
     log,
   };
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { Activity, Link2, LoaderCircle, Radio, Search } from "lucide-react";
@@ -86,6 +87,9 @@ export function ConnectHero() {
               <Button size="lg" variant="secondary" onClick={mock} disabled={!bridgeReady}>
                 <Radio className="h-4 w-4" />
                 Try demo mode
+              </Button>
+              <Button size="lg" variant="ghost" asChild>
+                <Link href="/size">App size</Link>
               </Button>
             </div>
           </div>

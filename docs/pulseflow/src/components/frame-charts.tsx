@@ -14,6 +14,7 @@ import {
 import { ChartShell } from "@/components/chart-shell";
 import { Button } from "@/components/ui/button";
 import { FRAME_BUDGET, healthFromPoint, normalizePoint, tooltipStyle } from "@/lib/chart-utils";
+import { frameSamples } from "@/lib/frame-metrics";
 import { usePulse } from "@/lib/pulse-store";
 import { formatMs } from "@/lib/utils";
 
@@ -35,8 +36,9 @@ export function FrameCharts() {
       second: "2-digit",
     }),
   }));
-  const latest = normalized[normalized.length - 1];
-  const jankCount = normalized.filter((p) => p.jank).length;
+  const frames = frameSamples(normalized);
+  const latest = frames.at(-1) ?? normalized[normalized.length - 1];
+  const jankCount = frames.filter((p) => p.jank).length;
   const health = healthFromPoint(latest, jankCount);
   const stallRoutes =
     stalls?.available && stalls.total > 0

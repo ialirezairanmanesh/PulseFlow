@@ -456,10 +456,17 @@ function framesBlock(state: AiContextState): string {
   const lines = ["## Frames (frame-budget track)"];
   const build = b("p95Build");
   const raster = b("p95Raster");
+  const frame = b("p95Frame");
   const jank = b("jank");
   if (build) lines.push(`- P95 build: ${build.value.toFixed(1)} ms (budget ${build.budget.toFixed(1)} ms)`);
   if (raster) lines.push(`- P95 raster: ${raster.value.toFixed(1)} ms (budget ${raster.budget.toFixed(1)} ms)`);
-  if (jank) lines.push(`- Jank ratio: ${(jank.value * 100).toFixed(0)}% (limit ${(jank.budget * 100).toFixed(0)}%)`);
+  if (frame) lines.push(`- P95 frame: ${frame.value.toFixed(1)} ms (budget ${frame.budget.toFixed(1)} ms)`);
+  if (jank) {
+    const note = jank.inconclusive ? " — sparse/stale; not a pass/fail gate" : "";
+    lines.push(
+      `- Jank ratio: ${(jank.value * 100).toFixed(0)}% (limit ${(jank.budget * 100).toFixed(0)}%)${note}`,
+    );
+  }
   lines.push(`- Samples: ${state.points.length}`);
   if (point) {
     lines.push(`- Latest frame: ${point.frameMs.toFixed(1)} ms`);

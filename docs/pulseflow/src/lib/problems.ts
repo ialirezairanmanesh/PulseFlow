@@ -1,5 +1,6 @@
 import { isAppCpuFrame, tipForCpuHotspot } from "@/lib/cpu-profile";
 import { FRAME_BUDGET } from "@/lib/chart-utils";
+import { frameDensity, frameSamples, jankRatioOf } from "@/lib/frame-metrics";
 import { isFrameworkWidget, isFrameworkWidgetName } from "@/lib/framework-widget";
 import { attachImpact, type ImpactContext } from "@/lib/impact";
 import { explainProblem } from "@/lib/explain";
@@ -200,9 +201,9 @@ export function buildProblems(input: {
     });
   }
 
-  const recent = points.slice(-20);
-  const jankRatio =
-    recent.length > 0 ? recent.filter((p) => p.jank).length / recent.length : 0;
+  const recent = frameSamples(points).slice(-20);
+  const density = frameDensity(points);
+  const jankRatio = density.dense ? jankRatioOf(recent) : 0;
   const framePressure = buildMs > budgetMs * 0.5 || jankRatio >= 0.25;
 
   // Screen-level scroll/interaction pressure — stronger signal than 1/s Animated shells.
@@ -274,6 +275,7 @@ export function buildProblems(input: {
 
   if (
     (scenarioRunning || scenarioResult?.ok) &&
+    density.dense &&
     jankRatio >= 0.35 &&
     recent.length >= 6
   ) {
@@ -388,20 +390,18 @@ export function computeBaselineMetrics(input: {
   jankRatio: number;
   problemCount: number;
 } {
-  const builds = input.points.map((p) => p.buildMs);
-  const rasters = input.points.map((p) => p.rasterMs);
-  const frames = input.points.map((p) => p.frameMs);
-  const jankRatio =
-    input.points.length > 0
-      ? input.points.filter((p) => p.jank).length / input.points.length
-      : 0;
+  const frames = frameSamples(input.points);
+  const builds = frames.map((p) => p.buildMs);
+  const rasters = frames.map((p) => p.rasterMs);
+  const frameMs = frames.map((p) => p.frameMs);
+  const jankRatio = jankRatioOf(input.points);
   return {
     id: `${Date.now()}-${input.label}`,
     label: input.label,
     t: Date.now(),
     p95BuildMs: Number(percentile(builds, 95).toFixed(2)),
     p95RasterMs: Number(percentile(rasters, 95).toFixed(2)),
-    p95FrameMs: Number(percentile(frames, 95).toFixed(2)),
+    p95FrameMs: Number(percentile(frameMs, 95).toFixed(2)),
     rebuildRate: input.hot?.widgets?.[0]?.ratePerSec ?? 0,
     heapMb: Number((input.points.at(-1)?.heapMb ?? 0).toFixed(2)),
     jankRatio: Number(jankRatio.toFixed(3)),

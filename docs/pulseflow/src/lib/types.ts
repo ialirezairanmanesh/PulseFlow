@@ -17,6 +17,12 @@ export interface MetricPoint {
   jank: number;
   heapMb: number;
   externalMb: number;
+  /**
+   * `frame` = real Flutter.Frame (or mock synthetic frame).
+   * `poll` = 500ms bridge echo of lastFrameMs — must not drive jank%.
+   * Omitted on older payloads; treated as a frame sample for compatibility.
+   */
+  sample?: "frame" | "poll";
   /** Display refresh rate reported by the app probe, when available. */
   refreshRate?: number;
   /** Per-frame budget in ms (`1000 / refreshRate`), when available. */

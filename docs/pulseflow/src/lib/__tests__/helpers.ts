@@ -41,6 +41,7 @@ export function point(overrides: Partial<MetricPoint> = {}): MetricPoint {
     jank: 0,
     heapMb: 0,
     externalMb: 0,
+    sample: "frame",
     ...overrides,
   };
 }

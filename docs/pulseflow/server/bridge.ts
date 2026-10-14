@@ -206,6 +206,8 @@ interface Session {
   lastBuildMs: number;
   lastRasterMs: number;
   lastVsyncMs: number;
+  lastHeapMb: number;
+  lastExternalMb: number;
   jankWindow: number[];
   extensionMethods: string[];
   httpProfileSupported: boolean | null;
@@ -461,6 +463,8 @@ function emitMockMetrics(session: Session) {
   session.lastBuildMs = buildMs;
   session.lastRasterMs = rasterMs;
   session.lastVsyncMs = vsyncMs;
+  session.lastHeapMb = heapMb;
+  session.lastExternalMb = 8 + Math.random() * 2;
 
   send(session.client, {
     type: "metrics",
@@ -473,8 +477,9 @@ function emitMockMetrics(session: Session) {
       rasterMs: Number(rasterMs.toFixed(2)),
       vsyncMs: Number(vsyncMs.toFixed(2)),
       jank,
+      sample: "frame",
       heapMb: Number(heapMb.toFixed(2)),
-      externalMb: Number((8 + Math.random() * 2).toFixed(2)),
+      externalMb: Number(session.lastExternalMb.toFixed(2)),
     },
   });
 
@@ -2202,6 +2207,15 @@ function handleVmEvent(session: Session, event: Record<string, unknown>) {
       if (frameMs > FRAME_BUDGET_MS) {
         pushMarker(session, "jank", `Jank frame ${frameMs.toFixed(1)} ms`);
       }
+      // Emit a real frame sample so jank% / P95 are not driven by 500ms poll echoes.
+      emitMetricPoint(session, {
+        sample: "frame",
+        frameMs,
+        buildMs,
+        rasterMs,
+        vsyncMs,
+        jank: frameMs > FRAME_BUDGET_MS ? 1 : 0,
+      });
     }
   }
 
@@ -2231,30 +2245,56 @@ function handleVmEvent(session: Session, event: Record<string, unknown>) {
   }
 }
 
-async function pollLiveMetrics(session: Session) {
-  if (session.mode !== "live" || !session.isolateId) return;
-  const mem = await pollMemory(session);
-  const buildMs = session.lastBuildMs;
-  const rasterMs = session.lastRasterMs;
-  const vsyncMs = session.lastVsyncMs;
-  const frameMs =
-    session.lastFrameMs || Math.max(buildMs + rasterMs, 0);
-  const pressure = framePressure(buildMs, rasterMs, frameMs);
-
+function emitMetricPoint(
+  session: Session,
+  opts: {
+    sample: "frame" | "poll";
+    frameMs: number;
+    buildMs: number;
+    rasterMs: number;
+    vsyncMs: number;
+    jank: number;
+  },
+) {
+  const pressure = framePressure(opts.buildMs, opts.rasterMs, opts.frameMs);
   send(session.client, {
     type: "metrics",
     point: {
       t: Date.now(),
       cpu: pressure,
       framePressure: pressure,
-      frameMs: Number(frameMs.toFixed(2)),
-      buildMs: Number(buildMs.toFixed(2)),
-      rasterMs: Number(rasterMs.toFixed(2)),
-      vsyncMs: Number(vsyncMs.toFixed(2)),
-      jank: frameMs > FRAME_BUDGET_MS ? 1 : 0,
-      heapMb: Number(mem.heapMb.toFixed(2)),
-      externalMb: Number(mem.externalMb.toFixed(2)),
+      frameMs: Number(opts.frameMs.toFixed(2)),
+      buildMs: Number(opts.buildMs.toFixed(2)),
+      rasterMs: Number(opts.rasterMs.toFixed(2)),
+      vsyncMs: Number(opts.vsyncMs.toFixed(2)),
+      jank: opts.jank,
+      sample: opts.sample,
+      heapMb: Number(session.lastHeapMb.toFixed(2)),
+      externalMb: Number(session.lastExternalMb.toFixed(2)),
     },
+  });
+}
+
+async function pollLiveMetrics(session: Session) {
+  if (session.mode !== "live" || !session.isolateId) return;
+  const mem = await pollMemory(session);
+  session.lastHeapMb = mem.heapMb;
+  session.lastExternalMb = mem.externalMb;
+  const buildMs = session.lastBuildMs;
+  const rasterMs = session.lastRasterMs;
+  const vsyncMs = session.lastVsyncMs;
+  const frameMs =
+    session.lastFrameMs || Math.max(buildMs + rasterMs, 0);
+
+  // Poll echoes lastFrameMs for heap/pressure charts only — never mark jank.
+  // Real jank / P95 come from Flutter.Frame samples (sample: "frame").
+  emitMetricPoint(session, {
+    sample: "poll",
+    frameMs,
+    buildMs,
+    rasterMs,
+    vsyncMs,
+    jank: 0,
   });
 
   await pollHttpProfile(session);
@@ -2290,10 +2330,11 @@ async function connectVm(session: Session, url: string) {
       await startWidgetProbe(session);
       await probeCapabilities(session);
       session.mode = "live";
-      session.lastFrameMs = 12;
-      session.lastBuildMs = 7;
-      session.lastRasterMs = 4;
-      session.lastVsyncMs = 1;
+      // Do not seed fake frame timings — that made jank% flip 0% → 100% on idle.
+      session.lastFrameMs = 0;
+      session.lastBuildMs = 0;
+      session.lastRasterMs = 0;
+      session.lastVsyncMs = 0;
       session.seenHttpIds.clear();
       session.memorySnapshots = [];
       session.timelineMarkers = [];
@@ -2597,6 +2638,8 @@ function attachClient(client: WebSocket) {
     lastBuildMs: 0,
     lastRasterMs: 0,
     lastVsyncMs: 0,
+    lastHeapMb: 0,
+    lastExternalMb: 0,
     jankWindow: [],
     extensionMethods: [],
     httpProfileSupported: null,
